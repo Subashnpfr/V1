@@ -124,8 +124,8 @@ git --version
 
 ### 1. Clone the repository
 
-<pre><code>git clone https://github.com/yourusername/v1-auto-captions.git
-cd v1-auto-captions
+<pre><code>git clone https://github.com/Subashnpfr/V1
+cd V1
 </code></pre>
 
 ---
