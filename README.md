@@ -1,348 +1,285 @@
-# V1 Auto Captions
+# V1 Auto Captions Studio 🎬✨
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js" />
-  <img src="https://img.shields.io/badge/FastAPI-0.116-009688?style=for-the-badge&logo=fastapi" />
-  <img src="https://img.shields.io/badge/Whisper-Offline-blue?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js" alt="Next.js 15" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react" alt="React 19" />
+  <img src="https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Whisper-Offline-blue?style=for-the-badge&logo=openai" alt="Whisper Offline" />
+  <img src="https://img.shields.io/badge/FFmpeg-Supported-green?style=for-the-badge&logo=ffmpeg" alt="FFmpeg" />
+  <img src="https://img.shields.io/badge/License-MIT-brightgreen?style=for-the-badge" alt="MIT License" />
 </p>
 
 <p align="center">
-  <b>Free • Offline • Open Source • Automatic Video Caption Generator</b>
+  <b>Free • 100% Offline • Open Source • AI Speech-to-Text & Subtitle Studio</b>
 </p>
 
 ---
 
-## ✨ Overview
+## 🌟 Overview
 
-**V1 Auto Captions** is a lightweight web application that automatically generates subtitle files (`.srt`) from uploaded videos.
+**V1 Auto Captions Studio** is a powerful, offline-first web application designed to automatically generate, edit, style, and burn subtitles into videos.
 
-It uses **FFmpeg** to extract audio and **OpenAI Whisper (via faster-whisper)** to perform speech-to-text transcription completely **offline**.
-
-No API keys. No cloud processing. No subscription.
+Powered by **OpenAI Whisper (via faster-whisper)** and **FFmpeg**, V1 processes video and audio locally without sending data to external APIs. It includes an interactive timeline editor, customizable caption styling, automatic multi-language translation, and a specialized **Nepali NLP Grammar & Spellchecking Pipeline**.
 
 ---
 
-## 🚀 Features
+## ✨ Features
 
-- 🎬 Upload MP4, MOV, MKV, and WebM videos
-- 🎧 Automatic audio extraction with FFmpeg
-- 🧠 Offline speech recognition using Whisper
-- ⏱️ Accurate timestamp generation
-- 📄 Download subtitles as `.srt`
-- 🌐 Modern web interface built with Next.js
-- 🔒 Privacy-friendly (all processing happens locally)
-- 💸 Completely free and open source
-
----
-
-## 🖼️ Screenshots
-
-### Upload Interface
-
-![Upload UI](./screenshots/upload.png)
-
-### Processing
-
-![Processing](./screenshots/processing.png)
-
-### Download Captions
-
-![Download](./screenshots/download.png)
-
-> Add your own screenshots inside the `screenshots/` folder.
+- 🎬 **Video & YouTube Ingestion**: Drag-and-drop local video files (`MP4`, `MOV`, `MKV`, `WebM`) or paste any YouTube URL to fetch and transcribe directly.
+- 🧠 **Offline AI Speech Recognition**: Fast, high-accuracy speech-to-text powered by `faster-whisper` with model auto-selection (`tiny`, `base`, `small`, `medium`, `large-v3`).
+- 🇳🇵 **Nepali NLP Engine**: Built-in 3-stage Nepali spellchecker and grammar corrector using Hunspell dictionaries (`ne_NP.dic`), Varnavinyas orthography, and custom confusion mapping (`ne_corrections.json`).
+- ✏️ **Interactive Subtitle Editor**: Live video player synchronization, real-time waveform timeline, subtitle segment split/merge, timestamp adjustments, and inline text editing.
+- 🎨 **Rich Caption Styling**: Customize font family, text color, outline, background pills, position, scale, and active-word animations.
+- 🌐 **Multi-Language Translation**: On-the-fly translation between English, Nepali, and other languages powered by `deep-translator`.
+- ⚡ **Real-time WebSocket Progress**: Live updates during audio extraction, AI inference, and video rendering tasks.
+- 📄 **Multiple Export Formats**: Download subtitle files in `.srt`, `.vtt`, and `.ass` formats.
+- 🎥 **Hardcoded Subtitle Burn-In**: Render pixel-perfect, high-quality subtitled MP4 videos directly using FFmpeg PNG overlay filters.
+- 🔒 **100% Private & Secure**: All transcription and video processing occur entirely on your local machine.
 
 ---
 
-## 🏗️ Project Structure
+## 🏗️ Project Architecture
 
-<pre><code>V1/
-├── backend/
-│   ├── app.py
-│   ├── requirements.txt
-│   ├── uploads/
-│   └── outputs/
+```
+V1/
+├── backend/                  # FastAPI Python Backend
+│   ├── app.py                # Main API application & WebSocket routes
+│   ├── nepali_nlp.py         # Nepali NLP 3-stage spellcheck pipeline
+│   ├── requirements.txt      # Python dependencies list
+│   ├── data/                 # Nepali dictionary & affix files
+│   │   ├── ne_NP.aff
+│   │   ├── ne_NP.dic
+│   │   ├── ne_corrections.json
+│   │   └── nepali_words.txt
+│   ├── utils/                # Helper modules
+│   │   ├── nepali_correction.py
+│   │   └── png_overlay_export.py
+│   ├── uploads/              # Temporary raw video storage (git-ignored)
+│   ├── outputs/              # Generated subtitle & MP4 exports (git-ignored)
+│   └── temp/                 # Intermediate processing cache (git-ignored)
 │
-├── frontend/
-│   ├── package.json
-│   ├── next.config.js
-│   ├── app/
-│   │   ├── page.js
-│   │   ├── layout.js
-│   │   └── globals.css
-│   └── public/
+├── frontend/                 # Next.js 15 / React 19 Frontend
+│   ├── package.json          # Node.js dependencies & scripts
+│   ├── next.config.js        # Next.js configuration
+│   ├── app/                  # App router pages & components
+│   │   ├── page.js           # Main landing / upload page
+│   │   ├── layout.js         # Root layout & theme providers
+│   │   ├── globals.css       # Global styles & design system
+│   │   ├── editor/           # Full subtitle studio page
+│   │   ├── components/       # UI Components (Editor, Player, Timeline, Styling)
+│   │   └── utils/            # Frontend export & segmentation utilities
+│   └── public/               # Static assets & icons
 │
-├── screenshots/
-└── README.md
-</code></pre>
+├── .gitignore                # Comprehensive Git exclusion rules
+└── README.md                 # Documentation
+```
 
 ---
 
-## ⚙️ Tech Stack
+## 📋 Prerequisites
 
-### Frontend
+Before installing V1 Auto Captions, ensure your machine has the following tools installed:
 
-- Next.js 15
-- React
-- Axios
-
-### Backend
-
-- FastAPI
-- Uvicorn
-- Python Multipart
-
-### AI / Audio
-
-- faster-whisper
-- FFmpeg
+| Tool | Recommended Version | Purpose |
+| :--- | :--- | :--- |
+| **Python** | `3.10` or higher | Backend FastAPI API & Whisper AI models |
+| **Node.js** | `18.0` or higher | Frontend Next.js app server |
+| **npm** | `9.0` or higher | Node package manager (comes with Node.js) |
+| **FFmpeg** | Latest stable | Audio extraction & subtitle video rendering |
+| **Git** | Latest | Source code management |
 
 ---
 
-## 📋 Requirements
+## 🛠️ Step-by-Step Installation Guide
 
-Make sure the following are installed on your system:
+### Step 1: Install System Dependencies
 
-| Tool | Version |
-|------|---------|
-| Python | 3.10+ |
-| Node.js | 18+ |
-| FFmpeg | Latest |
-| Git | Latest |
+#### 🪟 Windows
+1. **Python**: Download from [python.org](https://www.python.org/downloads/) or run:
+   ```powershell
+   winget install Python.Python.3.11
+   ```
+2. **Node.js**: Download from [nodejs.org](https://nodejs.org/) or run:
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   ```
+3. **FFmpeg**: Install via winget or Chocolatey:
+   ```powershell
+   winget install Gyan.FFmpeg
+   # OR
+   choco install ffmpeg
+   ```
+   *Note: Ensure FFmpeg is added to your Windows Environment System `PATH`.*
 
-### Verify Installation
+#### 🍏 macOS
+Using [Homebrew](https://brew.sh/):
+```bash
+brew install python node ffmpeg git
+```
 
-<pre><code>python --version
-node --version
-ffmpeg -version
-git --version
-</code></pre>
+#### 🐧 Linux (Ubuntu / Debian)
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv nodejs npm ffmpeg git
+```
 
 ---
 
-## 🔧 Installation
+### Step 2: Clone the Repository
 
-### 1. Clone the repository
-
-<pre><code>git clone https://github.com/Subashnpfr/V1
+```bash
+git clone https://github.com/Subashnpfr/V1.git
 cd V1
-</code></pre>
+```
 
 ---
 
-### 2. Setup the backend
+### Step 3: Setup & Run the Backend (Python FastAPI)
 
-<pre><code>cd backend
-pip install -r requirements.txt
-</code></pre>
+1. Open a terminal in the project root and navigate to `backend`:
+   ```bash
+   cd backend
+   ```
 
-Create required folders:
+2. Create a Python virtual environment:
+   ```bash
+   # On Windows:
+   python -m venv venv
 
-<pre><code>mkdir uploads outputs
-</code></pre>
+   # On macOS / Linux:
+   python3 -m venv venv
+   ```
 
-Run the API server:
+3. Activate the virtual environment:
+   ```bash
+   # Windows (PowerShell):
+   .\venv\Scripts\Activate.ps1
 
-<pre><code>uvicorn app:app --reload
-</code></pre>
+   # Windows (Command Prompt):
+   .\venv\Scripts\activate.bat
 
-Backend will be available at:
+   # macOS / Linux:
+   source venv/bin/activate
+   ```
 
-<pre><code>http://127.0.0.1:8000
-</code></pre>
+   *(If PowerShell gives a script execution policy error, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process` first).*
 
----
+4. Upgrade `pip` and install all required Python packages:
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
 
-### 3. Setup the frontend
+5. Start the FastAPI server:
+   ```bash
+   uvicorn app:app --reload --host 127.0.0.1 --port 8000
+   ```
 
-Open a new terminal:
-
-<pre><code>cd frontend
-npm install
-npm run dev
-</code></pre>
-
-Frontend will be available at:
-
-<pre><code>http://localhost:3000
-</code></pre>
-
----
-
-## 🧠 How It Works
-
-<pre><code>Video Upload
-     │
-     ▼
-Save File
-     │
-     ▼
-FFmpeg extracts audio
-     │
-     ▼
-Whisper transcribes speech
-     │
-     ▼
-Generate SRT timestamps
-     │
-     ▼
-Download captions.srt
-</code></pre>
+   - **Backend API URL**: `http://127.0.0.1:8000`
+   - **Interactive API Docs (Swagger UI)**: `http://127.0.0.1:8000/docs`
 
 ---
 
-## 📡 API
+### Step 4: Setup & Run the Frontend (Next.js)
 
-### POST /transcribe
+1. Open a **new terminal window** and navigate to the `frontend` directory:
+   ```bash
+   cd V1/frontend
+   ```
 
-Upload a video and receive an `.srt` subtitle file.
+2. Install Node.js packages using `npm`:
+   ```bash
+   npm install
+   ```
 
-#### Request
+3. Run the Next.js development server:
+   ```bash
+   npm run dev
+   ```
 
-<pre><code>multipart/form-data
-file: video.mp4
-</code></pre>
-
-#### Response
-
-- `captions.srt`
-
-#### Example using cURL
-
-<pre><code>curl -X POST "http://127.0.0.1:8000/transcribe" \\
-  -F "file=@video.mp4" --output captions.srt
-</code></pre>
-
----
-
-## 🎯 Whisper Model
-
-The project uses the **base** Whisper model by default.
-
-| Model | Speed | Accuracy |
-|------|------|------|
-| tiny | ⚡⚡⚡⚡⚡ | Low |
-| base | ⚡⚡⚡⚡ | Good |
-| small | ⚡⚡⚡ | Very Good |
-| medium | ⚡⚡ | Excellent |
-| large-v3 | ⚡ | Best |
-
-Change the model in `backend/app.py`:
-
-<pre><code>model = WhisperModel("base", device="cpu")
-</code></pre>
+4. Open your browser and navigate to:
+   ```
+   http://localhost:3000
+   ```
 
 ---
 
-## 📁 Output Example
+## 💻 Quick Reference Commands
 
-<pre><code>1
-00:00:00,000 --> 00:00:02,500
-Hello everyone.
-
-2
-00:00:02,500 --> 00:00:05,000
-Welcome to my video.
-</code></pre>
-
----
-
-## 🔒 Privacy
-
-All processing happens on your local machine.
-
-- ❌ No video is uploaded to external servers
-- ❌ No API keys are required
-- ❌ No cloud transcription services are used
-- ✅ Full control over your data
+| Action | Command | Directory |
+| :--- | :--- | :--- |
+| **Activate Python Venv (Win)** | `.\backend\venv\Scripts\Activate.ps1` | Root |
+| **Activate Python Venv (Mac/Linux)** | `source backend/venv/bin/activate` | Root |
+| **Run Backend API** | `uvicorn app:app --reload` | `backend/` |
+| **Install Frontend Packages** | `npm install` | `frontend/` |
+| **Run Frontend App** | `npm run dev` | `frontend/` |
 
 ---
 
-## 🚀 Roadmap
+## 📡 API Endpoints
 
-### V1 (Current)
-
-- [x] Video upload
-- [x] Audio extraction
-- [x] Offline transcription
-- [x] SRT generation
-- [x] Download subtitles
-
-### V2
-
-- [ ] Drag & drop upload
-- [ ] Progress bar
-- [ ] Subtitle editor
-- [ ] VTT export
-- [ ] Multi-language translation
-- [ ] Burn subtitles into video
-- [ ] YouTube URL support
-
-### V3
-
-- [ ] Speaker diarization
-- [ ] Batch processing
-- [ ] GPU acceleration
-- [ ] Desktop app (Tauri/Electron)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/transcribe` | Upload a video/audio file for Whisper AI transcription |
+| `POST` | `/transcribe/youtube` | Transcribe video directly from a YouTube URL |
+| `WS` | `/ws/progress/{task_id}` | WebSocket stream for real-time processing updates |
+| `POST` | `/export/overlay` | Render burned-in subtitled video with PNG overlay filter |
+| `GET` | `/download/{filename}` | Download generated SRT, VTT, ASS, or MP4 files |
 
 ---
 
-## 🐛 Troubleshooting
+## 🚀 GPU Acceleration (Optional)
 
-### FFmpeg not found
+If your system has an NVIDIA GPU with CUDA installed, `faster-whisper` will automatically utilize GPU acceleration for ultra-fast transcription!
 
-Add FFmpeg to your system PATH.
+To enable CUDA acceleration manually, ensure PyTorch with CUDA support is installed in your virtual environment:
 
-### CORS issues
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
 
-If frontend and backend are on different ports, enable CORS in FastAPI.
+---
 
-### Slow transcription
+## 🐛 Troubleshooting & Tips
 
-Use a smaller model:
+### 1. `ffmpeg is not recognized` Error
+- Verify FFmpeg installation by running `ffmpeg -version` in your terminal.
+- Ensure the directory containing `ffmpeg.exe` is added to your system `PATH`.
 
-<pre><code>WhisperModel("tiny", device="cpu")
-</code></pre>
+### 2. Node `npm install` Warnings or Errors
+- Ensure Node version is 18+. Run `node -v` to check.
+- If you face cache locks, run:
+  ```bash
+  npm cache clean --force
+  npm install
+  ```
 
-### Out of memory
-
-Close other applications or use the `tiny` model.
+### 3. PowerShell Execution Policy Error
+If activating Python `venv` fails on Windows PowerShell:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+```
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome!
+Contributions, bug reports, and feature suggestions are welcome!
 
-<pre><code>fork → create branch → commit → open pull request
-</code></pre>
-
-Please make sure your code follows the existing style and includes clear commit messages.
+1. Fork the project repository.
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4. Push to the branch (`git push origin feature/AmazingFeature`).
+5. Open a Pull Request.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License**.
-
-See the [LICENSE](LICENSE) file for details.
+Distributed under the **MIT License**. See `LICENSE` for more information.
 
 ---
-
-## 🙏 Acknowledgements
-
-- [OpenAI Whisper](https://github.com/openai/whisper)
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-- [FFmpeg](https://ffmpeg.org/)
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [Next.js](https://nextjs.org/)
-
----
-
-## ⭐ Support
-
-If you find this project useful, please consider giving it a **star** on GitHub.
 
 <p align="center">
-  <b>Made with ❤️ for creators, students, and open-source learners.</b>
+  Crafted with ❤️ by <a href="https://nepalsubash.com.np">Subash Nepal</a>
 </p>
