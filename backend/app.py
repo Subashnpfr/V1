@@ -749,3 +749,7 @@ async def download_mp4(job_id: str):
             detail="Burned MP4 file not found. Please click 'Burn Animated Subtitles into MP4' to render the subtitled video first."
         )
     return FileResponse(path, media_type="video/mp4", filename=f"{job_id}_subtitled.mp4")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.app:app", host="0.0.0.0", port=8000)
