@@ -1,4 +1,4 @@
-# (Under Maintenance / Not Working )V1 Auto Captions Studio 🎬✨
+# (Under Maintenance)V1 Auto Captions Studio 🎬✨
 
 <div align="center">
   <img src="https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=nextdotjs" alt="Next.js 15"/>
