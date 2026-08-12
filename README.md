@@ -30,23 +30,23 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 > **No virtual environment required** – the project installs dependencies globally.
 
 1. **Prerequisites** – ensure the following are installed and added to your `PATH`:
-   - **Python 3.10+** (download from https://python.org)
-   - **Node.js 18+** (download from https://nodejs.org)
-   - **FFmpeg** (install via winget: `winget install Gyan.FFmpeg`)
-2. **Clone the repository** (if you haven't already):
+   - **Python 3.10+** – https://python.org
+   - **Node.js 18+** – https://nodejs.org
+   - **FFmpeg** – `winget install Gyan.FFmpeg`
+2. **Clone the repository**:
    ```bash
    git clone https://github.com/Subashnpfr/V1.git
    cd V1
    ```
-3. **Run the provided setup script** – it installs all Python and Node dependencies and launches both services:
+3. **Run the provided setup script** – it installs all Python and Node dependencies, resolves security warnings, and launches both services:
    ```bat
    setup.bat
    ```
-   - The backend will be available at `http://127.0.0.1:8000`
-   - The frontend will be available at `http://localhost:3000`
-4. **Open the app** in your browser: `http://localhost:3000`
+   - Backend: `http://127.0.0.1:8000`
+   - Frontend: `http://localhost:3000`
+4. Open the app in your browser: `http://localhost:3000`
 
-*If you prefer to run the services manually:* 
+*Manual alternative*:
 - Backend: `python -m backend.app` (or `uvicorn backend.app:app --host 0.0.0.0 --port 8000`)
 - Frontend: `npm run dev --prefix frontend`
 
@@ -56,7 +56,7 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 
 ### API Endpoints
 | Method | Endpoint | Description |
-| :--- | :--- | :--- |
+|:---|:---|:---|
 | `POST` | `/upload` | Upload a video/audio file for Whisper transcription |
 | `POST` | `/youtube` | Transcribe a YouTube video directly |
 | `WS` | `/ws/logs/{job_id}` | Real‑time processing logs |
@@ -83,8 +83,19 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 
 ---
 
-## 🛠️ Development
+## ⚙️ Features
+- **Offline‑first**: All processing runs locally, no cloud services.
+- **Multi‑language Whisper** support with GPU acceleration via `faster-whisper`.
+- **Dynamic subtitle styling**: Custom fonts, colors, outlines, and positioning.
+- **Batch processing**: Queue multiple videos for automatic transcription and burning.
+- **YouTube integration**: Directly fetch and caption YouTube videos.
+- **Export formats**: SRT, VTT, and burned‑in MP4.
+- **Responsive UI** built with Next.js 15 and React 19.
+- **Robust security**: `npm audit fix --force` and explicit script approvals.
 
+---
+
+## 🛠️ Development
 ```bash
 # Backend (auto‑reload)
 uvicorn backend.app:app --reload
@@ -101,8 +112,6 @@ npm run dev   # start Next.js dev server
 ---
 
 ## 🤝 Contributing
-
-Contributions are welcome! Please:
 1. Fork the repo.
 2. Create a feature branch (`git checkout -b feature/YourFeature`).
 3. Ensure all tests pass (`npm test` & `pytest`).
@@ -111,7 +120,6 @@ Contributions are welcome! Please:
 ---
 
 ## 📄 License
-
 Distributed under the **MIT License**. See `LICENSE` for details.
 
 ---
