@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Dict, Any
 
+from utils.ffmpeg_tools import resolve_ffmpeg_bin
+
 def export_video_with_png_overlays(
     video_path: str,
     output_path: str,
@@ -27,6 +29,10 @@ def export_video_with_png_overlays(
 
     if not frames or len(frames) == 0:
         raise ValueError("No PNG overlay frames provided for subtitle export.")
+
+    ffmpeg = resolve_ffmpeg_bin()
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is not installed or not discoverable.")
 
     saved_frames = []
     frame_width = 1920
@@ -66,7 +72,7 @@ def export_video_with_png_overlays(
 
         # Step 2: Generate matching WxH 0-alpha transparent PNG for gaps
         cmd_empty = [
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-f", "lavfi", "-i", f"color=c=black@0.0:s={frame_width}x{frame_height}:d=0.1",
             "-vframes", "1",
             str(empty_png_path)
@@ -106,7 +112,7 @@ def export_video_with_png_overlays(
 
         # Step 4: Execute FFmpeg single-pass overlay command with scale2ref for perfect resolution matching
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-safe", "0",
             "-f", "concat",
             "-i", str(inputs_txt_path),

@@ -13,8 +13,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import { ThemeProvider } from '../components/ThemeProvider';
 import { resegmentSubtitles } from '../utils/segmentation';
 import { generateSubtitlePngFrames } from '../utils/exportRenderer';
-
-const API_BASE = 'http://127.0.0.1:8000';
+import { API_BASE } from '../utils/api';
 
 function EditorContent() {
   const searchParams = useSearchParams();

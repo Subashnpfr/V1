@@ -1,5 +1,6 @@
 # Created by Subash Nepal · nepalsubash.com.np
 import os
+import sys
 import uuid
 import math
 import asyncio
@@ -7,6 +8,7 @@ import subprocess
 import unicodedata
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
@@ -17,8 +19,23 @@ from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator
 import yt_dlp
 
+BACKEND_DIR = Path(__file__).resolve().parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+UPLOADS_DIR = BACKEND_DIR / "uploads"
+OUTPUTS_DIR = BACKEND_DIR / "outputs"
+TEMP_DIR = BACKEND_DIR / "temp"
+
 from utils.nepali_correction import process_nepali_correction_pipeline
 from utils.png_overlay_export import export_video_with_png_overlays
+from utils.ffmpeg_tools import (
+    ffmpeg_available,
+    ffmpeg_location_dir,
+    require_ffmpeg_or_raise,
+    resolve_ffmpeg_bin,
+    resolve_ffprobe_bin,
+)
 
 app = FastAPI(title="Auto Captions Studio API")
 
@@ -30,9 +47,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-os.makedirs("uploads", exist_ok=True)
-os.makedirs("outputs", exist_ok=True)
-os.makedirs("temp", exist_ok=True)
+for _dir in (UPLOADS_DIR, OUTPUTS_DIR, TEMP_DIR):
+    _dir.mkdir(parents=True, exist_ok=True)
 
 cpu_worker_count = max(1, (os.cpu_count() or 4) - 1)
 
@@ -67,9 +83,23 @@ def load_whisper_model(key: str, name: str) -> WhisperModel:
     MODEL_CACHE[key] = model
     return model
 
+FFMPEG_MISSING_MSG = (
+    "FFmpeg is not installed or not discoverable. "
+    "Install with: winget install Gyan.FFmpeg "
+    "Then restart the backend (close the backend terminal and run setup.bat again)."
+)
+
+def require_ffmpeg():
+    if not ffmpeg_available():
+        raise HTTPException(status_code=503, detail=FFMPEG_MISSING_MSG)
+
 @app.on_event("startup")
 async def startup_event():
     print("FastAPI server started successfully on http://127.0.0.1:8000")
+    if ffmpeg_available():
+        print(f"FFmpeg detected: {resolve_ffmpeg_bin()}")
+    else:
+        print(f"WARNING: {FFMPEG_MISSING_MSG}")
 
 def get_whisper_model_and_language(language_code: Optional[str]):
     """
@@ -173,8 +203,11 @@ def is_audio_file(filename: str) -> bool:
 
 def get_media_duration(file_path: str) -> float:
     try:
+        ffprobe = resolve_ffprobe_bin()
+        if not ffprobe:
+            return 0.0
         cmd = [
-            "ffprobe", "-v", "error",
+            ffprobe, "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             file_path
@@ -185,7 +218,7 @@ def get_media_duration(file_path: str) -> float:
         return 0.0
 
 def generate_ass_file(job_id: str, subtitles: List[dict], style_config: Optional[dict] = None) -> str:
-    ass_path = f"outputs/{job_id}.ass"
+    ass_path = str(OUTPUTS_DIR / f"{job_id}.ass")
 
     styles = style_config or {}
     font_name = styles.get("fontFamily", "Noto Sans Devanagari")
@@ -259,8 +292,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return ass_path
 
 def save_srt_and_vtt(job_id: str, subtitles: List[dict]):
-    srt_path = f"outputs/{job_id}.srt"
-    vtt_path = f"outputs/{job_id}.vtt"
+    srt_path = str(OUTPUTS_DIR / f"{job_id}.srt")
+    vtt_path = str(OUTPUTS_DIR / f"{job_id}.vtt")
 
     with open(srt_path, "w", encoding="utf-8") as f:
         f.write("# Created by Subash Nepal · nepalsubash.com.np\n\n")
@@ -294,12 +327,15 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
         if job_id in jobs:
             jobs[job_id]["duration"] = duration
 
-        clean_audio = f"temp/{job_id}_clean.wav"
+        clean_audio = str(TEMP_DIR / f"{job_id}_clean.wav")
 
         # Simple & Reliable Audio Pipeline: 16k mono WAV
         add_log(job_id, "Extracting audio")
+        ffmpeg = resolve_ffmpeg_bin()
+        if not ffmpeg:
+            raise RuntimeError(FFMPEG_MISSING_MSG)
         subprocess.run([
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-i", file_path,
             "-vn", "-ac", "1", "-ar", "16000",
             "-c:a", "pcm_s16le",
@@ -397,6 +433,7 @@ async def upload_file(
     file: UploadFile = File(...),
     language: Optional[str] = Form(None)
 ):
+    require_ffmpeg()
     try:
         job_id = str(uuid.uuid4())
         raw_filename = file.filename or "video.mp4"
@@ -406,8 +443,8 @@ async def upload_file(
         if not safe_filename:
             safe_filename = "uploaded_video.mp4"
 
-        os.makedirs("uploads", exist_ok=True)
-        file_path = f"uploads/{job_id}_{safe_filename}"
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = str(UPLOADS_DIR / f"{job_id}_{safe_filename}")
 
         # Write file in 1MB chunks to handle large video uploads smoothly
         with open(file_path, "wb") as f:
@@ -451,9 +488,10 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
     language = request.language
     if not url:
         raise HTTPException(status_code=400, detail="YouTube URL is required")
+    require_ffmpeg()
 
     job_id = str(uuid.uuid4())
-    out_template = f"uploads/{job_id}_%(title)s.%(ext)s"
+    out_template = str(UPLOADS_DIR / f"{job_id}_%(title)s.%(ext)s")
 
     jobs[job_id] = {
         "job_id": job_id,
@@ -474,15 +512,30 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
 
     def download_and_process():
         try:
+            require_ffmpeg_or_raise()
+            ffmpeg_dir = ffmpeg_location_dir()
+
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': out_template,
-                'quiet': True,
-                'no_warnings': True
+                "format": "bv*+ba/b",
+                "merge_output_format": "mp4",
+                "outtmpl": out_template,
+                "quiet": True,
+                "no_warnings": True,
+                "retries": 3,
             }
+            if ffmpeg_dir:
+                ydl_opts["ffmpeg_location"] = ffmpeg_dir
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info_dict = ydl.extract_info(url, download=True)
                 downloaded_file = ydl.prepare_filename(info_dict)
+                # After merge, extension is forced to mp4
+                root, _ = os.path.splitext(downloaded_file)
+                merged_mp4 = root + ".mp4"
+                if os.path.exists(merged_mp4):
+                    downloaded_file = merged_mp4
+
+            if not downloaded_file or not os.path.exists(downloaded_file):
+                raise RuntimeError("YouTube download finished but media file was not found on disk.")
 
             jobs[job_id]["video_path"] = downloaded_file
             jobs[job_id]["filename"] = os.path.basename(downloaded_file)
@@ -490,9 +543,14 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
 
             process_transcription_job(job_id, downloaded_file, language)
         except Exception as e:
+            err = str(e)
+            low = err.lower()
+            if "ffmpeg is not installed" in low or ("ffmpeg" in low and "not installed" in low):
+                err = FFMPEG_MISSING_MSG
             jobs[job_id]["status"] = "failed"
-            jobs[job_id]["error"] = str(e)
-            jobs[job_id]["message"] = f"YouTube processing failed: {str(e)}"
+            jobs[job_id]["error"] = err
+            jobs[job_id]["message"] = f"YouTube processing failed: {err}"
+            add_log(job_id, f"Error: {err}")
 
     background_tasks.add_task(download_and_process)
 
@@ -633,6 +691,7 @@ async def translate_subtitles(job_id: str, request: TranslateRequest):
 async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request: Optional[BurnRequest] = None):
     if job_id not in jobs:
         raise HTTPException(status_code=400, detail="Job not found")
+    require_ffmpeg()
 
     job = jobs[job_id]
     video_path = job["video_path"]
@@ -644,7 +703,7 @@ async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request
     style_cfg = request.style_config if request else None
     frames = request.frames if request else None
 
-    burned_path = f"outputs/{job_id}_subtitled.mp4"
+    burned_path = str(OUTPUTS_DIR / f"{job_id}_subtitled.mp4")
     jobs[job_id]["status"] = "burning subtitles"
     jobs[job_id]["progress"] = 90
     jobs[job_id]["message"] = "Rendering exact preview frame overlay MP4 video..."
@@ -659,7 +718,7 @@ async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request
                         video_path=video_path,
                         output_path=burned_path,
                         frames=frames,
-                        temp_dir=f"temp/{job_id}_export"
+                        temp_dir=str(TEMP_DIR / f"{job_id}_export")
                     )
                     success = True
                 except Exception as frame_err:
@@ -673,7 +732,7 @@ async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request
                 filter_str = f"ass='{abs_ass_path}'"
 
                 cmd = [
-                    "ffmpeg", "-y",
+                    resolve_ffmpeg_bin(), "-y",
                     "-i", video_path,
                     "-vf", filter_str,
                     "-c:a", "copy",
@@ -728,21 +787,21 @@ async def serve_media(job_id: str):
 
 @app.get("/download/{job_id}.srt")
 async def download_srt(job_id: str):
-    path = f"outputs/{job_id}.srt"
+    path = str(OUTPUTS_DIR / f"{job_id}.srt")
     if not os.path.exists(path):
         raise HTTPException(status_code=400, detail="SRT file not found")
     return FileResponse(path, media_type="text/plain; charset=utf-8", filename=f"{job_id}.srt")
 
 @app.get("/download/{job_id}.vtt")
 async def download_vtt(job_id: str):
-    path = f"outputs/{job_id}.vtt"
+    path = str(OUTPUTS_DIR / f"{job_id}.vtt")
     if not os.path.exists(path):
         raise HTTPException(status_code=400, detail="VTT file not found")
     return FileResponse(path, media_type="text/vtt; charset=utf-8", filename=f"{job_id}.vtt")
 
 @app.get("/download/{job_id}.mp4")
 async def download_mp4(job_id: str):
-    path = f"outputs/{job_id}_subtitled.mp4"
+    path = str(OUTPUTS_DIR / f"{job_id}_subtitled.mp4")
     if not os.path.exists(path):
         raise HTTPException(
             status_code=400,
@@ -752,4 +811,4 @@ async def download_mp4(job_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.app:app", host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

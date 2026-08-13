@@ -8,8 +8,7 @@ import UploadZone from './components/UploadZone';
 import ProgressBar from './components/ProgressBar';
 import ThemeToggle from './components/ThemeToggle';
 import { ThemeProvider } from './components/ThemeProvider';
-
-const API_BASE = 'http://127.0.0.1:8000';
+import { API_BASE } from './utils/api';
 
 function DashboardContent() {
   const router = useRouter();

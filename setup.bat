@@ -1,29 +1,54 @@
 @echo off
 rem V1 Auto Captions Studio - Windows setup script
-
-rem ---- Ensure script runs from repository root ----
 cd /d "%~dp0"
 
-rem ---- Install Python dependencies globally (no virtual environment) ----
+echo Checking FFmpeg...
+where ffmpeg >nul 2>&1
+if errorlevel 1 (
+    echo FFmpeg not found. Installing via winget...
+    winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
+    if errorlevel 1 (
+        echo Failed to install FFmpeg. Install manually: https://www.gyan.dev/ffmpeg/builds/
+        exit /b 1
+    )
+    echo.
+    echo FFmpeg was installed. Close this window, open a NEW terminal, then run setup.bat again
+    echo so PATH includes ffmpeg. Then start the app.
+    pause
+    exit /b 0
+)
+where ffprobe >nul 2>&1
+if errorlevel 1 (
+    echo ffprobe not found. Reinstall FFmpeg full build: winget install Gyan.FFmpeg
+    exit /b 1
+)
+echo FFmpeg OK.
+
+echo Installing Python dependencies...
 python -m pip install --upgrade pip
 python -m pip install -r backend\requirements.txt
+if errorlevel 1 (
+    echo Python dependency install failed.
+    exit /b 1
+)
 
-rem ---- Clean previous Node artifacts ----
-if exist frontend\package-lock.json del /f frontend\package-lock.json
-if exist frontend\node_modules rmdir /s /q frontend\node_modules
-
-rem ---- Install Node dependencies and enforce patched Next version ----
+echo Installing frontend dependencies...
 pushd frontend
-npm install
-npm install next@15.5.23 --save-exact
-npm audit fix --force
-npm approve-scripts --allow-scripts-pending
-npm install sharp@latest --save-exact
+call npm install
+if errorlevel 1 (
+    popd
+    echo Frontend dependency install failed.
+    exit /b 1
+)
 popd
 
-rem ---- Install concurrently for combined run (global) ----
-npm install -g concurrently
+echo.
+echo Setup complete. Starting backend and frontend...
+for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYSPATH=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USERPATH=%%B"
+set "PATH=%SYSPATH%;%USERPATH%"
+start "V1 Backend" cmd /k "cd /d %~dp0 && set PATH=%SYSPATH%;%USERPATH% && python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload"
+start "V1 Frontend" cmd /k "npm run dev --prefix frontend"
 
-rem ---- Start backend and frontend concurrently ----
-start "Backend" cmd /k "cd backend && python -m uvicorn app:app --host 0.0.0.0 --port 8000"
-start "Frontend" cmd /k "npm run dev --prefix frontend"
+echo Backend: http://127.0.0.1:8000
+echo Frontend: http://localhost:3000
