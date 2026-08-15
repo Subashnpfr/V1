@@ -9,12 +9,10 @@ import Timeline from '../components/Timeline';
 import SubtitleEditor from '../components/SubtitleEditor';
 import StylingPanel from '../components/StylingPanel';
 import ProgressBar from '../components/ProgressBar';
-import ThemeToggle from '../components/ThemeToggle';
-import { ThemeProvider } from '../components/ThemeProvider';
+import AppShell from '../components/AppShell';
 import { resegmentSubtitles } from '../utils/segmentation';
 import { generateSubtitlePngFrames } from '../utils/exportRenderer';
-
-const API_BASE = 'http://127.0.0.1:8000';
+import { API_BASE } from '../utils/api';
 
 function EditorContent() {
   const searchParams = useSearchParams();
@@ -36,17 +34,19 @@ function EditorContent() {
   // Styling Configuration State
   const [styleConfig, setStyleConfig] = useState({
     fontFamily: 'Inter',
-    fontSize: 22,
-    fontWeight: '600',
-    textColor: '#F5F7FA',
-    bgColor: '#000000',
-    bgOpacity: 0.6,
+    fontSize: 24,
+    fontWeight: '700',
+    textColor: '#F7F8FA',
+    bgColor: '#0B0B0B',
+    bgOpacity: 0.55,
     outlineWidth: 1,
     outlineColor: '#000000',
-    shadowBlur: 4,
+    shadowBlur: 6,
     shadowColor: '#000000',
     position: 'bottom',
-    marginV: 30
+    marginV: 36,
+    letterSpacing: 0,
+    textTransform: 'none'
   });
 
   // Creator Animation Configuration State
@@ -54,7 +54,7 @@ function EditorContent() {
     preset: 'none',
     typewriterSpeed: 'medium',
     showCursor: true,
-    highlightColor: '#4F8CFF',
+    highlightColor: '#F59E0B',
     roundedBackground: true
   });
 
@@ -73,6 +73,7 @@ function EditorContent() {
   const [burnProgress, setBurnProgress] = useState(0);
   const [burnMessage, setBurnMessage] = useState('');
   const [burnCompleted, setBurnCompleted] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   useEffect(() => {
     if (!jobId) return;
@@ -126,7 +127,7 @@ function EditorContent() {
             } else if (res.data.status === 'failed') {
               setBackendBurning(false);
               setBurning(false);
-              alert(`Burning failed: ${res.data.error || res.data.message}`);
+              setNotice(res.data.error || res.data.message);
             }
           }
         }
@@ -148,7 +149,7 @@ function EditorContent() {
         setTimeout(() => setSavedSuccess(false), 2500);
       }
     } catch (err) {
-      alert('Failed to save subtitles');
+      setNotice('Failed to save subtitles');
     } finally {
       setSaving(false);
     }
@@ -170,7 +171,7 @@ function EditorContent() {
         setSubtitles(res.data.subtitles);
       }
     } catch (err) {
-      alert('Translation failed. Please try again.');
+      setNotice('Translation failed. Please try again.');
     } finally {
       setTranslating(false);
     }
@@ -223,7 +224,7 @@ function EditorContent() {
     } catch (err) {
       setBurning(false);
       setBackendBurning(false);
-      alert('Failed to trigger subtitle export.');
+      setNotice('Failed to start subtitle export.');
     }
   };
 
@@ -238,61 +239,49 @@ function EditorContent() {
 
   if (!jobId) {
     return (
-      <div className="app-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>No active job specified.</p>
-        <button className="btn-primary" onClick={() => router.push('/')} style={{ marginTop: '1rem' }}>
-          Go to Dashboard
-        </button>
-      </div>
+      <AppShell compact>
+        <div className="card" style={{ maxWidth: 480, margin: '4rem auto', textAlign: 'center' }}>
+          <h2>No project selected</h2>
+          <p style={{ margin: '0.75rem 0 1.25rem' }}>Start from the dashboard to generate captions first.</p>
+          <button className="btn-primary" onClick={() => router.push('/')}>
+            Back to dashboard
+          </button>
+        </div>
+      </AppShell>
     );
   }
 
   if (loading) {
     return (
-      <div className="app-container" style={{ textAlign: 'center', paddingTop: '6rem' }}>
-        <Loader2 size={36} style={{ animation: 'spin 1.5s linear infinite', color: '#4F8CFF' }} />
-        <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>Loading Subtitle Studio...</p>
-        <style jsx>{`
-          @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}</style>
-      </div>
+      <AppShell compact>
+        <div style={{ textAlign: 'center', paddingTop: '6rem' }}>
+          <Loader2 size={36} className="animate-spin" style={{ color: 'var(--accent)' }} />
+          <p style={{ marginTop: '1rem' }}>Loading studio…</p>
+        </div>
+      </AppShell>
     );
   }
 
   const videoUrl = `${API_BASE}/video/${jobId}`;
 
   return (
-    <div className="app-container">
-      {/* Header Bar */}
-      <header style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '1.25rem',
-        paddingBottom: '1rem',
-        borderBottom: '1px solid var(--border)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button className="btn-secondary" onClick={() => router.push('/')} style={{ padding: '0.45rem' }}>
+    <AppShell compact>
+      <div className="studio-toolbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0 }}>
+          <button className="btn-secondary" onClick={() => router.push('/')} aria-label="Back">
             <ArrowLeft size={18} />
           </button>
-          <div>
-            <h1 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-primary)' }}>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ fontSize: '18px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {filename}
             </h1>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Job ID: {jobId}</p>
+            <p style={{ fontSize: '12px' }}>{subtitles.length} cues · local job</p>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <ThemeToggle />
-
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface)', padding: '0.35rem 0.75rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
-            <Globe size={16} style={{ color: '#4F8CFF' }} />
+            <Globe size={16} style={{ color: 'var(--accent)' }} />
             <select
               value={targetLang}
               onChange={(e) => setTargetLang(e.target.value)}
@@ -322,51 +311,44 @@ function EditorContent() {
 
           <button className="btn-primary" onClick={handleSaveSubtitles} disabled={saving}>
             {saving ? <Loader2 size={15} className="animate-spin" /> : savedSuccess ? <Check size={15} /> : <Save size={15} />}
-            {savedSuccess ? 'Saved' : 'Save Changes'}
+            {savedSuccess ? 'Saved' : 'Save'}
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* Main Grid Layout */}
+      {notice && <div className="alert alert-error">{notice}</div>}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 380px',
-          gap: '1.25rem',
-          alignItems: 'start'
-        }}>
-          {/* Left Column: Video Preview */}
-          <div>
-            <VideoPlayer
-              videoUrl={videoUrl}
-              subtitles={subtitles}
-              onTimeUpdate={(t) => setCurrentTime(t)}
-              onVideoMetadata={(meta) => setVideoMeta(meta)}
-              activeSubtitleId={activeSubId}
-              styleConfig={styleConfig}
-              animationConfig={animationConfig}
-            />
-          </div>
+        <div className="editor-grid">
+          <VideoPlayer
+            videoUrl={videoUrl}
+            subtitles={subtitles}
+            onTimeUpdate={(t) => setCurrentTime(t)}
+            onVideoMetadata={(meta) => setVideoMeta(meta)}
+            activeSubtitleId={activeSubId}
+            styleConfig={styleConfig}
+            animationConfig={animationConfig}
+          />
 
-          {/* Right Column: Styling & Animation Sidebar */}
-          <div>
-            <StylingPanel
-              styleConfig={styleConfig}
-              onChangeStyle={(upd) => setStyleConfig(prev => ({ ...prev, ...upd }))}
-              segmentConfig={segmentConfig}
-              onChangeSegment={(upd) => setSegmentConfig(prev => ({ ...prev, ...upd }))}
-              animationConfig={animationConfig}
-              onChangeAnimation={(upd) => setAnimationConfig(prev => ({ ...prev, ...upd }))}
-              onApplyResegmentation={handleApplyResegmentation}
-              onDownloadSrt={() => downloadFile(`${API_BASE}/download/${jobId}.srt`, `${jobId}.srt`)}
-              onDownloadVtt={() => downloadFile(`${API_BASE}/download/${jobId}.vtt`, `${jobId}.vtt`)}
-              onBurnSubtitles={handleBurnSubtitles}
-              burning={burning}
-            />
-          </div>
+          <StylingPanel
+            styleConfig={styleConfig}
+            onChangeStyle={(upd) => setStyleConfig(prev => ({ ...prev, ...upd }))}
+            segmentConfig={segmentConfig}
+            onChangeSegment={(upd) => setSegmentConfig(prev => ({ ...prev, ...upd }))}
+            animationConfig={animationConfig}
+            onChangeAnimation={(upd) => setAnimationConfig(prev => ({ ...prev, ...upd }))}
+            onApplyLook={(look) => {
+              setStyleConfig(prev => ({ ...prev, ...look.style }));
+              setAnimationConfig(prev => ({ ...prev, ...look.animation }));
+            }}
+            onApplyResegmentation={handleApplyResegmentation}
+            onDownloadSrt={() => downloadFile(`${API_BASE}/download/${jobId}.srt`, `${jobId}.srt`)}
+            onDownloadVtt={() => downloadFile(`${API_BASE}/download/${jobId}.vtt`, `${jobId}.vtt`)}
+            onBurnSubtitles={handleBurnSubtitles}
+            burning={burning}
+          />
         </div>
 
-        {/* Burn Status Notifications */}
         {burning && (
           <div className="card">
             <ProgressBar progress={burnProgress} message={burnMessage} />
@@ -374,19 +356,17 @@ function EditorContent() {
         )}
 
         {burnCompleted && (
-          <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(34, 197, 94, 0.1)', borderColor: 'rgba(34, 197, 94, 0.3)' }}>
-            <span style={{ color: '#4ade80', fontWeight: '600' }}>✓ Subtitled MP4 Ready for Download!</span>
+          <div className="alert alert-success" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600 }}>Subtitled MP4 is ready</span>
             <button
               className="btn-primary"
               onClick={() => downloadFile(`${API_BASE}/download/${jobId}.mp4`, `${jobId}_subtitled.mp4`)}
-              style={{ background: '#22c55e' }}
             >
-              Download Subtitled MP4
+              Download MP4
             </button>
           </div>
         )}
 
-        {/* Timeline */}
         <Timeline
           duration={videoDuration}
           currentTime={currentTime}
@@ -395,7 +375,6 @@ function EditorContent() {
           onSeek={(t) => setCurrentTime(t)}
         />
 
-        {/* Subtitle Editor */}
         <div className="card">
           <SubtitleEditor
             subtitles={subtitles}
@@ -404,16 +383,14 @@ function EditorContent() {
           />
         </div>
       </div>
-    </div>
+    </AppShell>
   );
 }
 
 export default function EditorPage() {
   return (
-    <ThemeProvider>
-      <Suspense fallback={<div style={{ textAlign: 'center', paddingTop: '4rem', color: 'var(--text-secondary)' }}>Loading...</div>}>
-        <EditorContent />
-      </Suspense>
-    </ThemeProvider>
+    <Suspense fallback={<div style={{ textAlign: 'center', paddingTop: '4rem', color: 'var(--text-secondary)' }}>Loading studio…</div>}>
+      <EditorContent />
+    </Suspense>
   );
 }

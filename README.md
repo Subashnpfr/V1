@@ -1,4 +1,4 @@
-# (Under Maintenance)V1 Auto Captions Studio 🎬✨
+# V1 Auto Captions Studio 🎬✨
 
 <div align="center">
   <img src="https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=nextdotjs" alt="Next.js 15"/>
@@ -32,7 +32,8 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 1. **Prerequisites** – ensure the following are installed and added to your `PATH`:
    - **Python 3.10+** – https://python.org
    - **Node.js 18+** – https://nodejs.org
-   - **FFmpeg** – `winget install Gyan.FFmpeg`
+   - **FFmpeg** (required for YouTube merge, audio extract, burn) – `winget install Gyan.FFmpeg`
+     - After install, **open a new terminal** so PATH updates. Verify with `ffmpeg -version`.
 2. **Clone the repository**:
    ```bash
    git clone https://github.com/Subashnpfr/V1.git
@@ -47,7 +48,7 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 4. Open the app in your browser: `http://localhost:3000`
 
 *Manual alternative*:
-- Backend: `python -m backend.app` (or `uvicorn backend.app:app --host 0.0.0.0 --port 8000`)
+- Backend (from repo root): `python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload`
 - Frontend: `npm run dev --prefix frontend`
 
 ---
@@ -91,7 +92,7 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 - **YouTube integration**: Directly fetch and caption YouTube videos.
 - **Export formats**: SRT, VTT, and burned‑in MP4.
 - **Responsive UI** built with Next.js 15 and React 19.
-- **Robust security**: `npm audit fix --force` and explicit script approvals.
+- **Robust security**: pinned Next.js 15.5.23, explicit `sharp` override, and no wildcard image remote patterns.
 
 ---
 
@@ -106,8 +107,9 @@ npm run dev   # start Next.js dev server
 ```
 
 ### Code Quality
-- Follow **PEP 8** for Python and **Airbnb** style for JavaScript/React.
+- Follow **PEP 8** for Python and **Airbnb** style for JavaScript/React.
 - Run `flake8` and `eslint` locally before committing.
+- After dependency changes, run `npm install --prefix frontend` and review `npm audit`.
 
 ---
 

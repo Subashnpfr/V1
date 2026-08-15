@@ -18,10 +18,8 @@ export function ThemeProvider({ children }) {
       setTheme(savedTheme);
       document.documentElement.setAttribute('data-theme', savedTheme);
     } else {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const initialTheme = prefersDark ? 'dark' : 'light';
-      setTheme(initialTheme);
-      document.documentElement.setAttribute('data-theme', initialTheme);
+      setTheme('dark');
+      document.documentElement.setAttribute('data-theme', 'dark');
     }
     setMounted(true);
   }, []);

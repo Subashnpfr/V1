@@ -30,10 +30,10 @@ export default function Timeline({
 
   return (
     <div className="card-elevated" style={{ padding: '0.85rem 1.25rem', margin: '0' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.6rem', fontSize: '12px', fontWeight: '500', color: '#A8B0BD' }}>
-        <span style={{ fontWeight: '600', color: '#F5F7FA' }}>Subtitle Timeline</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.6rem', fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary)' }}>
+        <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>Timeline</span>
         <span>
-          <strong style={{ color: '#4F8CFF' }}>{formatTime(currentTime)}</strong> / {formatTime(maxTime)}
+          <strong style={{ color: 'var(--accent)' }}>{formatTime(currentTime)}</strong> / {formatTime(maxTime)}
         </span>
       </div>
 
@@ -44,9 +44,9 @@ export default function Timeline({
         style={{
           position: 'relative',
           height: '42px',
-          backgroundColor: '#0B0D10',
+          backgroundColor: 'var(--bg-main)',
           borderRadius: '12px',
-          border: '1px solid #242933',
+          border: '1px solid var(--border)',
           cursor: 'pointer',
           overflow: 'hidden'
         }}
@@ -65,9 +65,9 @@ export default function Timeline({
                 left: `${leftPercent}%`,
                 width: `${widthPercent}%`,
                 height: '100%',
-                backgroundColor: isActive ? '#4F8CFF' : 'rgba(23, 27, 33, 0.95)',
-                borderLeft: isActive ? '2px solid #ffffff' : '1px solid #242933',
-                borderRight: isActive ? '2px solid #ffffff' : '1px solid #242933',
+                backgroundColor: isActive ? 'var(--accent)' : 'var(--surface)',
+                borderLeft: isActive ? '2px solid #ffffff' : '1px solid var(--border)',
+                borderRight: isActive ? '2px solid #ffffff' : '1px solid var(--border)',
                 borderRadius: '6px',
                 display: 'flex',
                 alignItems: 'center',

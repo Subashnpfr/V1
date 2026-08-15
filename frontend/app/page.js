@@ -1,20 +1,19 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
-import { Subtitles, Youtube, ArrowRight, Video } from 'lucide-react';
+import { Youtube, ArrowRight, Video, Sparkles } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import ProgressBar from './components/ProgressBar';
-import ThemeToggle from './components/ThemeToggle';
-import { ThemeProvider } from './components/ThemeProvider';
-
-const API_BASE = 'http://127.0.0.1:8000';
+import AppShell from './components/AppShell';
+import { API_BASE } from './utils/api';
 
 function DashboardContent() {
   const router = useRouter();
   const [selectedFile, setSelectedFile] = useState(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [language, setLanguage] = useState('auto');
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -22,9 +21,8 @@ function DashboardContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processLogs, setProcessLogs] = useState([]);
-  const logEndRef = React.useRef(null);
+  const logEndRef = useRef(null);
 
-  // Poll job status & real-time logs every 500ms when job is active
   useEffect(() => {
     if (!jobId || status === 'completed' || status === 'failed') return;
 
@@ -38,10 +36,8 @@ function DashboardContent() {
           if (res.data.logs && Array.isArray(res.data.logs)) {
             setProcessLogs(res.data.logs);
           }
-
-          if (res.data.status === 'completed') {
-            setLoading(false);
-          } else if (res.data.status === 'failed') {
+          if (res.data.status === 'completed') setLoading(false);
+          else if (res.data.status === 'failed') {
             setLoading(false);
             setError(res.data.error || 'Job processing failed');
           }
@@ -54,16 +50,12 @@ function DashboardContent() {
     return () => clearInterval(interval);
   }, [jobId, status]);
 
-  // Auto-scroll logs to bottom
   useEffect(() => {
-    if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [processLogs]);
 
   const handleFileUpload = async () => {
     if (!selectedFile) return;
-
     setLoading(true);
     setError(null);
     setProgress(5);
@@ -71,20 +63,17 @@ function DashboardContent() {
 
     const formData = new FormData();
     formData.append('file', selectedFile);
+    if (language && language !== 'auto') formData.append('language', language);
 
     try {
       const res = await axios.post(`${API_BASE}/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 20) / progressEvent.total);
-            setProgress(percent);
+            setProgress(Math.round((progressEvent.loaded * 20) / progressEvent.total));
           }
         }
       });
-
       if (res.data.success) {
         setJobId(res.data.job_id);
         setStatus('processing');
@@ -95,9 +84,10 @@ function DashboardContent() {
     } catch (err) {
       setLoading(false);
       if (err.code === 'ERR_NETWORK' || !err.response) {
-        setError(`Cannot connect to backend server at ${API_BASE}. Please ensure the FastAPI backend is running.`);
+        setError(`Cannot reach the API at ${API_BASE}. Start the FastAPI backend and try again.`);
       } else {
-        setError(err.response?.data?.detail || err.message || 'Failed to upload video');
+        const detail = err.response?.data?.detail;
+        setError(typeof detail === 'string' ? detail : err.message || 'Failed to upload video');
       }
     }
   };
@@ -105,14 +95,15 @@ function DashboardContent() {
   const handleYoutubeSubmit = async (e) => {
     e.preventDefault();
     if (!youtubeUrl.trim()) return;
-
     setLoading(true);
     setError(null);
     setProgress(10);
     setMessage('Connecting to YouTube...');
-
     try {
-      const res = await axios.post(`${API_BASE}/youtube`, { url: youtubeUrl.trim() });
+      const res = await axios.post(`${API_BASE}/youtube`, {
+        url: youtubeUrl.trim(),
+        language: language === 'auto' ? null : language
+      });
       if (res.data.success) {
         setJobId(res.data.job_id);
         setStatus('downloading youtube video');
@@ -122,179 +113,123 @@ function DashboardContent() {
       }
     } catch (err) {
       setLoading(false);
-      setError(err.response?.data?.detail || 'Failed to process YouTube URL');
-    }
-  };
-
-  const navigateToEditor = () => {
-    if (jobId) {
-      router.push(`/editor?job_id=${jobId}`);
+      const detail = err.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : 'Failed to process YouTube URL');
     }
   };
 
   return (
-    <div className="app-container">
-      {/* Header */}
-      <header style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '2.5rem',
-        paddingBottom: '1rem',
-        borderBottom: '1px solid var(--border)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{
-            width: '36px',
-            height: '36px',
-            background: '#4F8CFF',
-            borderRadius: '10px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#ffffff'
-          }}>
-            <Subtitles size={20} />
+    <AppShell>
+      <section className="hero">
+        <div className="hero-copy">
+          <div className="eyebrow"><Sparkles size={14} /> Offline AI studio</div>
+          <h1>Captions that feel <em>shipped</em>, not sketched.</h1>
+          <p className="lead">
+            Transcribe locally with Whisper, style word-level animations, then burn an MP4 — your media never leaves this machine.
+          </p>
+          <div className="steps">
+            <div className="step"><span className="step-index">1</span> Import</div>
+            <div className="step"><span className="step-index">2</span> Transcribe</div>
+            <div className="step"><span className="step-index">3</span> Style & export</div>
           </div>
-          <div>
-            <span style={{ fontWeight: '700', fontSize: '18px', color: 'var(--text-primary)' }}>Auto Captions Studio</span>
+          <div className="preview-stage" aria-hidden>
+            <div className="preview-caption">यो <b>caption</b> तयार छ</div>
           </div>
         </div>
-        <div>
-          <ThemeToggle />
-        </div>
-      </header>
 
-      {/* Main Container */}
-      <main style={{ maxWidth: '720px', margin: '0 auto' }}>
-        <div className="card" style={{ padding: '2rem' }}>
-          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <h1 style={{ fontSize: '28px', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-              Professional Subtitle Editor
-            </h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-              Transcribe, animate, style, translate, and burn captions for video content.
-            </p>
-          </div>
+        <div className="create-card">
+          {error && <div className="alert alert-error" role="alert">{error}</div>}
 
-          {/* Error Alert */}
-          {error && (
-            <div style={{
-              backgroundColor: 'rgba(239, 68, 68, 0.15)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              color: '#fca5a5',
-              padding: '0.75rem 1rem',
-              borderRadius: '12px',
-              marginBottom: '1.5rem',
-              fontSize: '13px'
-            }}>
-              {error}
+          <label className="field-label" htmlFor="language">Spoken language</label>
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            disabled={loading}
+            style={{ marginBottom: '1.15rem' }}
+          >
+            <option value="auto">Auto detect</option>
+            <option value="en">English</option>
+            <option value="ne">Nepali (नेपाली)</option>
+            <option value="hi">Hindi (हिन्दी)</option>
+          </select>
+
+          <label className="field-label">Upload media</label>
+          <UploadZone
+            onFileSelect={setSelectedFile}
+            selectedFile={selectedFile}
+            disabled={loading}
+          />
+          {selectedFile && !loading && status !== 'completed' && (
+            <div style={{ marginTop: '1rem' }}>
+              <button className="btn-primary" onClick={handleFileUpload} style={{ width: '100%', justifyContent: 'center' }}>
+                <Video size={16} /> Generate captions
+              </button>
             </div>
           )}
 
-          {/* Section 1: Drag & Drop */}
-          <div style={{ marginBottom: '2rem' }}>
-            <h3 style={{ fontSize: '14px', color: 'var(--text-primary)', marginBottom: '0.75rem', fontWeight: '600' }}>
-              Upload Video File
-            </h3>
-            <UploadZone
-              onFileSelect={(file) => setSelectedFile(file)}
-              selectedFile={selectedFile}
-              disabled={loading}
-            />
-            {selectedFile && !loading && status !== 'completed' && (
-              <div style={{ marginTop: '1rem', textAlign: 'right' }}>
-                <button className="btn-primary" onClick={handleFileUpload}>
-                  <Video size={16} /> Process Uploaded Video
-                </button>
-              </div>
-            )}
-          </div>
+          <div className="divider"><span>OR</span></div>
 
-          {/* Divider */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            margin: '2rem 0',
-            color: 'var(--text-secondary)',
-            fontSize: '12px',
-            fontWeight: '600'
-          }}>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
-            <span style={{ padding: '0 1rem' }}>OR</span>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
-          </div>
+          <label className="field-label" htmlFor="youtube-url">YouTube URL</label>
+          <form onSubmit={handleYoutubeSubmit} className="yt-row">
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Youtube
+                size={18}
+                style={{
+                  position: 'absolute',
+                  left: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#ef4444'
+                }}
+              />
+              <input
+                id="youtube-url"
+                type="url"
+                className="input-text"
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+            <button type="submit" className="btn-primary" disabled={loading || !youtubeUrl.trim()}>
+              Fetch
+            </button>
+          </form>
 
-          {/* Section 2: YouTube URL */}
-          <div>
-            <h3 style={{ fontSize: '14px', color: 'var(--text-primary)', marginBottom: '0.75rem', fontWeight: '600' }}>
-              Import from YouTube
-            </h3>
-            <form onSubmit={handleYoutubeSubmit} style={{ display: 'flex', gap: '0.75rem' }}>
-              <div style={{ position: 'relative', flex: 1 }}>
-                <Youtube
-                  size={18}
-                  style={{
-                    position: 'absolute',
-                    left: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    color: '#ef4444'
-                  }}
-                />
-                <input
-                  type="text"
-                  className="input-text"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                  disabled={loading}
-                  style={{ paddingLeft: '2.5rem' }}
-                />
-              </div>
-              <button
-                type="submit"
-                className="btn-secondary"
-                disabled={loading || !youtubeUrl.trim()}
-              >
-                Fetch Video
-              </button>
-            </form>
-          </div>
-
-          {/* Progress Bar */}
           {loading && (
-            <ProgressBar progress={progress} message={message} />
+            <>
+              <ProgressBar progress={progress} message={message} />
+              {processLogs.length > 0 && (
+                <div className="log-panel" aria-live="polite">
+                  {processLogs.map((entry, idx) => (
+                    <div key={`${entry}-${idx}`} className="log-entry">
+                      <span className="log-text">{entry}</span>
+                    </div>
+                  ))}
+                  <div ref={logEndRef} />
+                </div>
+              )}
+            </>
           )}
 
-          {/* Completed CTA */}
           {status === 'completed' && (
-            <div style={{
-              marginTop: '2rem',
-              padding: '1.25rem',
-              borderRadius: '16px',
-              backgroundColor: 'rgba(34, 197, 94, 0.1)',
-              border: '1px solid rgba(34, 197, 94, 0.3)',
-              textAlign: 'center'
-            }}>
-              <p style={{ color: '#4ade80', fontWeight: '600', marginBottom: '0.75rem', fontSize: '14px' }}>
-                ✓ {message}
+            <div className="alert alert-success" style={{ marginTop: '1.25rem', textAlign: 'center' }}>
+              <p style={{ fontWeight: 600, marginBottom: '0.75rem', color: 'inherit' }}>
+                {message || 'Transcription complete'}
               </p>
-              <button className="btn-primary" onClick={navigateToEditor}>
-                Open Subtitle Studio <ArrowRight size={16} />
+              <button className="btn-primary" onClick={() => router.push(`/editor?job_id=${jobId}`)}>
+                Open studio <ArrowRight size={16} />
               </button>
             </div>
           )}
         </div>
-      </main>
-    </div>
+      </section>
+    </AppShell>
   );
 }
 
 export default function Dashboard() {
-  return (
-    <ThemeProvider>
-      <DashboardContent />
-    </ThemeProvider>
-  );
+  return <DashboardContent />;
 }

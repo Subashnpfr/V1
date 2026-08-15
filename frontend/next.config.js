@@ -1,18 +1,8 @@
-// next.config.js – minimal configuration for the V1 frontend
+/** @type {import('next').NextConfig} */
 module.exports = {
-  // Enable React strict mode for better dev warnings
   reactStrictMode: true,
-  // Allow images from any source (adjust as needed for production)
+  // Offline-first app: no remote image optimization needed
   images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "*",
-      },
-    ],
+    unoptimized: true,
   },
-  // Future‑proof experimental flags (can be removed when not needed)
-  experimental: {
-    appDir: true,
-  },
-};
+};
