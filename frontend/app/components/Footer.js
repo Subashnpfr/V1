@@ -10,49 +10,27 @@ export default function Footer() {
   return (
     <>
       <footer style={{
-        marginTop: '3rem',
-        padding: '1.25rem 0',
+        marginTop: 'auto',
+        padding: '1.5rem 24px',
         borderTop: '1px solid var(--border)',
         textAlign: 'center',
-        fontSize: '12px',
-        color: 'var(--text-secondary)',
-        opacity: 0.85,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: '0.4rem'
+        fontSize: '12px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
           <span>
-            Created by{' '}
+            Built by{' '}
             <a
               href="https://nepalsubash.com.np"
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                color: 'var(--accent)',
-                fontWeight: '600',
-                textDecoration: 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.2rem'
-              }}
+              style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}
             >
               Subash Nepal <ExternalLink size={11} />
-            </a>{' '}
-            ·{' '}
-            <a
-              href="https://nepalsubash.com.np"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}
-            >
-              nepalsubash.com.np
             </a>
           </span>
-
           <span>•</span>
-
+          <span>Offline AI captions</span>
+          <span>•</span>
           <button
             type="button"
             onClick={() => setShowAbout(true)}
@@ -68,11 +46,10 @@ export default function Footer() {
               textDecoration: 'underline'
             }}
           >
-            <Info size={12} /> About Subtitle Studio
+            <Info size={12} /> About
           </button>
         </div>
       </footer>
-
       {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </>
   );

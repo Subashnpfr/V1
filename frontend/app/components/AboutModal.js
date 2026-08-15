@@ -75,7 +75,7 @@ export default function AboutModal({ onClose }) {
           </div>
           <div>
             <h2 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-primary)' }}>
-              Auto Captions Studio
+              V1 Captions Studio
             </h2>
             <p style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: '600' }}>
               Created by Subash Nepal · nepalsubash.com.np

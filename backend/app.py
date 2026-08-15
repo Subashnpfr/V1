@@ -120,8 +120,8 @@ def get_whisper_model_and_language(language_code: Optional[str]):
         model = load_whisper_model("ne", "large-v3")
         return model, "ne", "Nepali model (large-v3)"
     else:
-        model = load_whisper_model("mix", "large-v3")
-        return model, None, "Nepali/Devanagari model (large-v3)"
+        model = load_whisper_model("mix", "medium")
+        return model, None, "Auto language model (medium)"
 
 jobs: Dict[str, dict] = {}
 log_subscribers: Dict[str, set] = {}
@@ -156,7 +156,33 @@ def add_log(job_id: str, message: str):
         if "logs" not in jobs[job_id]:
             jobs[job_id]["logs"] = []
         jobs[job_id]["logs"].append(log_entry)
+        jobs[job_id]["message"] = message
     print(log_entry)
+
+def update_job(job_id: str, **fields):
+    if job_id in jobs:
+        jobs[job_id].update(fields)
+
+def run_ffmpeg(args: List[str], timeout: int = 600) -> None:
+    ffmpeg = resolve_ffmpeg_bin()
+    if not ffmpeg:
+        raise RuntimeError(FFMPEG_MISSING_MSG)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *args]
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"FFmpeg timed out after {timeout}s") from exc
+    if res.returncode != 0:
+        err = (res.stderr or res.stdout or "").strip()[-2000:]
+        raise RuntimeError(err or f"FFmpeg failed with code {res.returncode}")
 
 def format_srt_time(seconds: float) -> str:
     h = int(seconds // 3600)
@@ -330,22 +356,18 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
         clean_audio = str(TEMP_DIR / f"{job_id}_clean.wav")
 
         # Simple & Reliable Audio Pipeline: 16k mono WAV
-        add_log(job_id, "Extracting audio")
-        ffmpeg = resolve_ffmpeg_bin()
-        if not ffmpeg:
-            raise RuntimeError(FFMPEG_MISSING_MSG)
-        subprocess.run([
-            ffmpeg, "-y",
+        add_log(job_id, "Extracting audio with FFmpeg")
+        update_job(job_id, status="extracting audio", progress=20)
+        run_ffmpeg([
             "-i", file_path,
             "-vn", "-ac", "1", "-ar", "16000",
             "-c:a", "pcm_s16le",
             clean_audio
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ])
 
-        if job_id in jobs:
-            jobs[job_id]["progress"] = 25
+        update_job(job_id, progress=28, status="loading speech model")
+        add_log(job_id, "Audio extracted. Loading Whisper (first run downloads the model and can take several minutes)...")
 
-        # Stable Model Selection & Language Routing
         model, forced_lang, model_label = get_whisper_model_and_language(language)
         add_log(job_id, f"Using {model_label}")
 
@@ -364,14 +386,17 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
         if forced_lang:
             transcribe_kwargs["language"] = forced_lang
 
-        add_log(job_id, "Transcribing speech with word timestamps")
-        if job_id in jobs:
-            jobs[job_id]["progress"] = 40
+        add_log(job_id, "Transcribing speech — this stays on this step until the whole file is done")
+        update_job(job_id, progress=40, status="transcribing")
 
         segments, info = model.transcribe(clean_audio, **transcribe_kwargs)
 
         subtitles = []
         for idx, seg in enumerate(segments, start=1):
+            if idx == 1:
+                add_log(job_id, "First speech segment decoded — transcription is running")
+            if idx % 8 == 0:
+                update_job(job_id, progress=min(80, 42 + idx), message=f"Transcribing… cue {idx}")
             words = []
             if hasattr(seg, "words") and seg.words:
                 for w in seg.words:
@@ -491,7 +516,7 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
     require_ffmpeg()
 
     job_id = str(uuid.uuid4())
-    out_template = str(UPLOADS_DIR / f"{job_id}_%(title)s.%(ext)s")
+    out_template = str(UPLOADS_DIR / f"{job_id}.%(ext)s")
 
     jobs[job_id] = {
         "job_id": job_id,
@@ -516,9 +541,10 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
             ffmpeg_dir = ffmpeg_location_dir()
 
             ydl_opts = {
-                "format": "bv*+ba/b",
+                "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
                 "merge_output_format": "mp4",
                 "outtmpl": out_template,
+                "restrictfilenames": True,
                 "quiet": True,
                 "no_warnings": True,
                 "retries": 3,

@@ -265,7 +265,9 @@ export default function SubtitleOverlay({
           textShadow: getOutlineShadowCss(styleConfig, model.outlineW, model.shadowB),
           display: 'inline-block',
           whiteSpace: 'pre-wrap',
-          lineHeight: 1.25,
+          lineHeight: 1.22,
+          letterSpacing: styleConfig.letterSpacing ? `${styleConfig.letterSpacing}em` : 'normal',
+          textTransform: styleConfig.textTransform || 'none',
           maxWidth: '100%',
           wordBreak: 'break-word',
           boxSizing: 'border-box'
