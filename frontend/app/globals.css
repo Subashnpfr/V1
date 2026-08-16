@@ -81,7 +81,7 @@ h3 {
   color: var(--text-primary);
 }
 
-p, span, label {
+p, label {
   color: var(--text-secondary);
 }
 

@@ -11,8 +11,9 @@ import StylingPanel from '../components/StylingPanel';
 import ProgressBar from '../components/ProgressBar';
 import AppShell from '../components/AppShell';
 import { resegmentSubtitles } from '../utils/segmentation';
-import { generateSubtitlePngFrames } from '../utils/exportRenderer';
+import { sanitizeSubtitleList } from '../utils/captionText';
 import { API_BASE } from '../utils/api';
+import { generateSubtitlePngFrames } from '../utils/exportRenderer';
 
 function EditorContent() {
   const searchParams = useSearchParams();
@@ -22,6 +23,10 @@ function EditorContent() {
   const [subtitles, setSubtitles] = useState([]);
   const [filename, setFilename] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [jobStatus, setJobStatus] = useState(null);
+  const [isAudio, setIsAudio] = useState(false);
+  const [seekTo, setSeekTo] = useState(null);
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [translating, setTranslating] = useState(false);
@@ -33,20 +38,21 @@ function EditorContent() {
 
   // Styling Configuration State
   const [styleConfig, setStyleConfig] = useState({
-    fontFamily: 'Inter',
-    fontSize: 24,
-    fontWeight: '700',
-    textColor: '#F7F8FA',
-    bgColor: '#0B0B0B',
-    bgOpacity: 0.55,
-    outlineWidth: 1,
+    fontFamily: 'Montserrat',
+    fontSize: 32,
+    fontWeight: '900',
+    textColor: '#FFFFFF',
+    bgColor: '#000000',
+    bgOpacity: 0,
+    outlineWidth: 5,
     outlineColor: '#000000',
-    shadowBlur: 6,
+    shadowBlur: 8,
     shadowColor: '#000000',
     position: 'bottom',
-    marginV: 36,
-    letterSpacing: 0,
-    textTransform: 'none'
+    marginV: 40,
+    letterSpacing: -0.02,
+    textTransform: 'uppercase',
+    accentMode: 'last-word'
   });
 
   // Creator Animation Configuration State
@@ -54,17 +60,17 @@ function EditorContent() {
     preset: 'none',
     typewriterSpeed: 'medium',
     showCursor: true,
-    highlightColor: '#F59E0B',
-    roundedBackground: true
+    highlightColor: '#FF2BD6',
+    roundedBackground: false
   });
 
   // Re-segmentation Configuration State
   const [segmentConfig, setSegmentConfig] = useState({
-    maxWords: 6,
-    maxCharsPerLine: 32,
-    maxLines: 2,
-    minDuration: 0.8,
-    maxDuration: 4.0
+    maxWords: 4,
+    maxCharsPerLine: 18,
+    maxLines: 1,
+    minDuration: 0.6,
+    maxDuration: 2.4
   });
 
   // Subtitle burning states
@@ -74,6 +80,10 @@ function EditorContent() {
   const [burnMessage, setBurnMessage] = useState('');
   const [burnCompleted, setBurnCompleted] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [outputScript, setOutputScript] = useState('native');
+  const [convertingScript, setConvertingScript] = useState(false);
+  const [retranscribing, setRetranscribing] = useState(false);
+  const [captionLanguage, setCaptionLanguage] = useState('auto');
 
   useEffect(() => {
     if (!jobId) return;
@@ -82,8 +92,21 @@ function EditorContent() {
       try {
         const res = await axios.get(`${API_BASE}/subtitles/${jobId}`);
         if (res.data.success) {
-          const subs = res.data.subtitles || [];
+          setJobStatus(res.data.transcription_status || res.data.status);
+          setIsAudio(!!res.data.is_audio);
+          setOutputScript(res.data.output_script || 'native');
+          setCaptionLanguage(res.data.source_language || 'auto');
+          const trans = res.data.transcription_status || res.data.status;
+          if (trans && trans !== 'completed' && trans !== 'failed' && !(res.data.subtitles || []).length) {
+            setLoadError('Transcription is still running. Return to the dashboard and wait until it finishes.');
+            setLoading(false);
+            return;
+          }
+          const subs = sanitizeSubtitleList(res.data.subtitles || []);
           setSubtitles(subs);
+          if ((res.data.output_script || 'native') === 'roman') {
+            setSegmentConfig((prev) => ({ ...prev, maxCharsPerLine: Math.max(prev.maxCharsPerLine, 28) }));
+          }
           setFilename(res.data.filename || 'Video');
 
           if (subs.length > 0) {
@@ -91,7 +114,9 @@ function EditorContent() {
           }
         }
       } catch (err) {
-        console.error('Failed to load subtitles:', err);
+        const status = err.response?.status;
+        if (status === 404) setLoadError('Job not found. The backend may have been restarted without a saved project file.');
+        else setLoadError('Could not load this project. Check that the API is running.');
       } finally {
         setLoading(false);
       }
@@ -116,19 +141,18 @@ function EditorContent() {
       try {
         const res = await axios.get(`${API_BASE}/status/${jobId}`);
         if (res.data.success) {
-          if (res.data.status === 'burning subtitles' || res.data.status === 'completed' || res.data.status === 'failed') {
-            setBurnProgress(res.data.progress);
-            setBurnMessage(res.data.message);
-
-            if (res.data.status === 'completed') {
-              setBackendBurning(false);
-              setBurning(false);
-              setBurnCompleted(true);
-            } else if (res.data.status === 'failed') {
-              setBackendBurning(false);
-              setBurning(false);
-              setNotice(res.data.error || res.data.message);
-            }
+          setBurnProgress(res.data.progress);
+          setBurnMessage(res.data.message);
+          if (res.data.export_status === 'completed') {
+            setBackendBurning(false);
+            setBurning(false);
+            setBurnCompleted(true);
+          } else if (res.data.export_status === 'failed') {
+            setBackendBurning(false);
+            setBurning(false);
+            setNotice(res.data.error || res.data.message);
+          } else if (res.data.export_status === 'burning') {
+            setBurnProgress(res.data.progress || 90);
           }
         }
       } catch (err) {
@@ -140,16 +164,20 @@ function EditorContent() {
   }, [backendBurning, jobId]);
 
   const handleSaveSubtitles = async () => {
-    if (!jobId) return;
+    if (!jobId) return false;
     setSaving(true);
     try {
       const res = await axios.post(`${API_BASE}/subtitles/${jobId}`, { subtitles });
       if (res.data.success) {
         setSavedSuccess(true);
         setTimeout(() => setSavedSuccess(false), 2500);
+        return true;
       }
+      setNotice('Failed to save subtitles');
+      return false;
     } catch (err) {
       setNotice('Failed to save subtitles');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -162,6 +190,10 @@ function EditorContent() {
 
   const handleTranslate = async () => {
     if (!jobId) return;
+    const ok = window.confirm(
+      'Translation uses Google Translate and requires internet. Caption text is sent to Google. Continue?'
+    );
+    if (!ok) return;
     setTranslating(true);
     try {
       const res = await axios.post(`${API_BASE}/translate/${jobId}`, {
@@ -169,62 +201,122 @@ function EditorContent() {
       });
       if (res.data.success) {
         setSubtitles(res.data.subtitles);
+        setNotice(res.data.privacy || 'Translated. Word timings are approximate.');
       }
     } catch (err) {
-      setNotice('Translation failed. Please try again.');
+      const detail = err.response?.data?.detail;
+      setNotice(typeof detail === 'string' ? detail : 'Translation failed. Google Translate requires internet.');
     } finally {
       setTranslating(false);
     }
   };
 
+  const handleConvertScript = async () => {
+    if (!jobId) return;
+    await handleSaveSubtitles();
+    setConvertingScript(true);
+    try {
+      const res = await axios.post(`${API_BASE}/script/${jobId}`, { output_script: outputScript });
+      if (res.data.success) {
+        setSubtitles(res.data.subtitles || []);
+        setOutputScript(res.data.output_script);
+        setNotice(res.data.note || 'Script updated. Meaning is unchanged.');
+        if (res.data.output_script === 'roman') {
+          setSegmentConfig((prev) => ({ ...prev, maxCharsPerLine: Math.max(prev.maxCharsPerLine, 28) }));
+        }
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setNotice(typeof detail === 'string' ? detail : 'Script conversion failed.');
+    } finally {
+      setConvertingScript(false);
+    }
+  };
+
+  const handleRetranscribe = async () => {
+    if (!jobId) return;
+    const ok = window.confirm('Re-transcribe this media with the selected spoken language? Captions will be replaced.');
+    if (!ok) return;
+    setRetranscribing(true);
+    try {
+      await axios.post(`${API_BASE}/retranscribe/${jobId}`, {
+        language: captionLanguage,
+        output_script: outputScript
+      });
+      setNotice('Re-transcribing… stay on this page.');
+      const poll = setInterval(async () => {
+        try {
+          const st = await axios.get(`${API_BASE}/status/${jobId}`);
+          if (st.data.status === 'completed') {
+            clearInterval(poll);
+            const res = await axios.get(`${API_BASE}/subtitles/${jobId}`);
+            setSubtitles(sanitizeSubtitleList(res.data.subtitles || []));
+            setOutputScript(res.data.output_script || outputScript);
+            setRetranscribing(false);
+            setNotice('Re-transcription finished.');
+          } else if (st.data.status === 'failed') {
+            clearInterval(poll);
+            setRetranscribing(false);
+            setNotice(st.data.error || 'Re-transcription failed.');
+          }
+        } catch (e) {
+          clearInterval(poll);
+          setRetranscribing(false);
+          setNotice('Could not check re-transcription status.');
+        }
+      }, 800);
+    } catch (err) {
+      setRetranscribing(false);
+      const detail = err.response?.data?.detail;
+      setNotice(typeof detail === 'string' ? detail : 'Could not start re-transcription.');
+    }
+  };
+
   const handleBurnSubtitles = async () => {
     if (!jobId) return;
-
-    await handleSaveSubtitles();
+    const saved = await handleSaveSubtitles();
+    if (!saved) return;
 
     setBurning(true);
     setBackendBurning(false);
     setBurnCompleted(false);
     setBurnProgress(5);
-    setBurnMessage('Snapshotting preview overlay frames matching preview window...');
+    setBurnMessage('Capturing studio overlay (same renderer as preview)...');
 
     const combinedStyle = {
       ...styleConfig,
       animationPreset: animationConfig.preset,
-      highlightColor: animationConfig.highlightColor
+      highlightColor: animationConfig.highlightColor,
+      maxWordsPerLine: segmentConfig.maxWords,
+      maxCharsPerLine: segmentConfig.maxCharsPerLine
     };
 
     try {
-      let frames = [];
-      try {
-        frames = await generateSubtitlePngFrames({
-          subtitles,
-          styleConfig,
-          animationConfig,
-          videoWidth: videoMeta.width || 1920,
-          videoHeight: videoMeta.height || 1080,
-          onProgress: (p) => {
-            setBurnProgress(5 + Math.round(p * 0.7)); // 5% to 75%
-            setBurnMessage(`Capturing exact preview overlay frames (${Math.round(p)}%)...`);
-          }
-        });
-      } catch (frameErr) {
-        console.warn('DOM PNG frame capture warning, using backend renderer:', frameErr);
-      }
-
-      setBurnProgress(80);
-      setBurnMessage('Rendering video with exact overlay frames via FFmpeg...');
-
-      setBackendBurning(true);
-
-      await axios.post(`${API_BASE}/burn/${jobId}`, {
-        style_config: combinedStyle,
-        frames: frames && frames.length > 0 ? frames : null
+      const vw = isAudio ? 1920 : (videoMeta.width || 1920);
+      const vh = isAudio ? 1080 : (videoMeta.height || 1080);
+      const frames = await generateSubtitlePngFrames({
+        subtitles,
+        styleConfig: combinedStyle,
+        animationConfig,
+        videoWidth: vw,
+        videoHeight: vh,
+        onProgress: (pct) => {
+          setBurnProgress(Math.min(80, 5 + Math.round(pct * 0.7)));
+          setBurnMessage(`Capturing overlay ${pct}%`);
+        }
       });
+      setBurnMessage('Compositing overlay onto video...');
+      setBackendBurning(true);
+      await axios.post(
+        `${API_BASE}/burn/${jobId}`,
+        { style_config: combinedStyle, frames },
+        { timeout: 600000, maxBodyLength: Infinity, maxContentLength: Infinity }
+      );
     } catch (err) {
       setBurning(false);
       setBackendBurning(false);
-      setNotice('Failed to start subtitle export.');
+      const detail = err.response?.data?.detail;
+      setNotice(typeof detail === 'string' ? detail : (err.message || 'Failed to start subtitle export.'));
     }
   };
 
@@ -262,6 +354,18 @@ function EditorContent() {
     );
   }
 
+  if (loadError) {
+    return (
+      <AppShell compact>
+        <div className="card" style={{ maxWidth: 520, margin: '4rem auto', textAlign: 'center' }}>
+          <h2>Cannot open studio</h2>
+          <p style={{ margin: '0.75rem 0 1.25rem' }}>{loadError}</p>
+          <button className="btn-primary" onClick={() => router.push('/')}>Back to dashboard</button>
+        </div>
+      </AppShell>
+    );
+  }
+
   const videoUrl = `${API_BASE}/video/${jobId}`;
 
   return (
@@ -280,6 +384,40 @@ function EditorContent() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface)', padding: '0.35rem 0.75rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+            <select
+              value={captionLanguage}
+              onChange={(e) => setCaptionLanguage(e.target.value)}
+              disabled={retranscribing}
+              aria-label="Spoken language for re-transcribe"
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '13px' }}
+            >
+              <option value="auto">Auto detect</option>
+              <option value="ne">Nepali</option>
+              <option value="hi">Hindi / Hinglish</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <button className="btn-secondary" onClick={handleRetranscribe} disabled={retranscribing}>
+            {retranscribing ? <Loader2 size={15} className="animate-spin" /> : 'Re-transcribe'}
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface)', padding: '0.35rem 0.75rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+            <select
+              value={outputScript}
+              onChange={(e) => setOutputScript(e.target.value)}
+              disabled={convertingScript || captionLanguage === 'en'}
+              aria-label="Caption script"
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '13px' }}
+            >
+              <option value="native">Native script</option>
+              <option value="roman">Romanized / Hinglish</option>
+            </select>
+          </div>
+          <button className="btn-secondary" onClick={handleConvertScript} disabled={convertingScript || captionLanguage === 'en'}>
+            {convertingScript ? <Loader2 size={15} className="animate-spin" /> : 'Convert script'}
+          </button>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface)', padding: '0.35rem 0.75rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
             <Globe size={16} style={{ color: 'var(--accent)' }} />
             <select
@@ -325,8 +463,14 @@ function EditorContent() {
             subtitles={subtitles}
             onTimeUpdate={(t) => setCurrentTime(t)}
             onVideoMetadata={(meta) => setVideoMeta(meta)}
+            seekTo={seekTo}
             activeSubtitleId={activeSubId}
-            styleConfig={styleConfig}
+            isAudio={isAudio}
+            styleConfig={{
+              ...styleConfig,
+              maxCharsPerLine: segmentConfig.maxCharsPerLine,
+              maxWordsPerLine: segmentConfig.maxWords
+            }}
             animationConfig={animationConfig}
           />
 
@@ -345,6 +489,7 @@ function EditorContent() {
             onDownloadSrt={() => downloadFile(`${API_BASE}/download/${jobId}.srt`, `${jobId}.srt`)}
             onDownloadVtt={() => downloadFile(`${API_BASE}/download/${jobId}.vtt`, `${jobId}.vtt`)}
             onBurnSubtitles={handleBurnSubtitles}
+            canBurnVideo
             burning={burning}
           />
         </div>
@@ -372,7 +517,10 @@ function EditorContent() {
           currentTime={currentTime}
           subtitles={subtitles}
           activeSubtitleId={activeSubId}
-          onSeek={(t) => setCurrentTime(t)}
+          onSeek={(t) => {
+            setCurrentTime(t);
+            setSeekTo(t);
+          }}
         />
 
         <div className="card">
@@ -380,6 +528,7 @@ function EditorContent() {
             subtitles={subtitles}
             onChange={(updated) => setSubtitles(updated)}
             activeSubtitleId={activeSubId}
+            onTogglePlay={() => setSeekTo((t) => (t == null ? currentTime : t))}
           />
         </div>
       </div>

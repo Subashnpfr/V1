@@ -1,4 +1,4 @@
-import { toPng } from 'html-to-image';
+import { toCanvas } from 'html-to-image';
 
 export async function renderNodeToPngDataUrl(node, width, height) {
   if (typeof window !== 'undefined' && document.fonts && document.fonts.ready) {
@@ -6,19 +6,22 @@ export async function renderNodeToPngDataUrl(node, width, height) {
       await document.fonts.ready;
     } catch (e) {}
   }
-  const dataUrl = await toPng(node, {
+  const canvas = await toCanvas(node, {
     width,
     height,
+    canvasWidth: width,
+    canvasHeight: height,
     pixelRatio: 1,
     cacheBust: false,
     skipFonts: true,
-    backgroundColor: 'transparent',
+    backgroundColor: null,
     style: {
       margin: '0',
       transform: 'none',
       visibility: 'visible',
-      opacity: '1'
+      opacity: '1',
+      background: 'transparent'
     }
   });
-  return dataUrl;
+  return canvas.toDataURL('image/png');
 }

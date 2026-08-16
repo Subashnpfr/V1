@@ -16,6 +16,7 @@ export default function StylingPanel({
   onDownloadSrt,
   onDownloadVtt,
   onBurnSubtitles,
+  canBurnVideo = true,
   burning
 }) {
   const [activeTab, setActiveTab] = useState('looks');
@@ -46,20 +47,23 @@ export default function StylingPanel({
               <span
                 className="look-sample"
                 style={{
-                  fontFamily: `"${look.style.fontFamily}", "Noto Sans Devanagari", sans-serif`,
+                  fontFamily: `"${look.style.fontFamily}", "Noto Sans Devanagari", Impact, sans-serif`,
                   fontWeight: look.style.fontWeight,
                   color: look.style.textColor,
-                  background: look.style.bgOpacity > 0.05
-                    ? look.style.bgColor
-                    : 'transparent',
-                  letterSpacing: look.style.letterSpacing ? `${look.style.letterSpacing}em` : 'normal',
+                  background: look.style.bgOpacity > 0.05 ? look.style.bgColor : '#1a1a1a',
+                  letterSpacing: `${look.style.letterSpacing || 0}em`,
                   textTransform: look.style.textTransform,
-                  textShadow: look.style.outlineWidth
-                    ? `0 1px 0 ${look.style.outlineColor}, 0 6px 16px rgba(0,0,0,0.45)`
-                    : '0 8px 18px rgba(0,0,0,0.4)'
+                  textShadow: '0 0 0 #000, 1px 1px 0 #000, -1px -1px 0 #000, 0 8px 14px rgba(0,0,0,0.5)'
                 }}
               >
-                {look.sample}
+                {look.style.accentMode === 'last-word' || look.sampleAccent ? (
+                  <>
+                    {look.sample.replace(look.sampleAccent || look.sample.split(' ').slice(-1)[0], '').trim()}{' '}
+                    <b style={{ color: look.animation.highlightColor, fontWeight: 900 }}>
+                      {look.sampleAccent || look.sample.split(' ').slice(-1)[0]}
+                    </b>
+                  </>
+                ) : look.sample}
               </span>
               <strong>{look.name}</strong>
               <em>{look.hint}</em>
@@ -206,7 +210,7 @@ export default function StylingPanel({
               <input
                 type="range"
                 min="14"
-                max="48"
+                max="56"
                 value={styleConfig.fontSize}
                 onChange={(e) => onChangeStyle({ fontSize: parseInt(e.target.value, 10) })}
                 style={{ width: '100%' }}
@@ -227,13 +231,24 @@ export default function StylingPanel({
             </div>
 
             <div style={{ marginTop: '0.75rem' }}>
+              <label className="field-label">Keyword accent</label>
+              <select
+                value={styleConfig.accentMode || 'none'}
+                onChange={(e) => onChangeStyle({ accentMode: e.target.value })}
+              >
+                <option value="none">None</option>
+                <option value="last-word">Last word (viral)</option>
+              </select>
+            </div>
+
+            <div style={{ marginTop: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '0.25rem' }}>
                 <span>Tracking</span>
                 <strong style={{ color: 'var(--text-primary)' }}>{Number(styleConfig.letterSpacing || 0).toFixed(2)}</strong>
               </div>
               <input
                 type="range"
-                min="0"
+                min="-0.04"
                 max="0.12"
                 step="0.01"
                 value={styleConfig.letterSpacing || 0}
@@ -256,7 +271,7 @@ export default function StylingPanel({
                   max="15"
                   className="input-text"
                   value={segmentConfig.maxWords}
-                  onChange={(e) => onChangeSegment({ maxWords: parseInt(e.target.value, 10) || 6 })}
+                  onChange={(e) => onChangeSegment({ maxWords: parseInt(e.target.value, 10) || 4 })}
                 />
               </div>
               <div>
@@ -267,7 +282,7 @@ export default function StylingPanel({
                   max="60"
                   className="input-text"
                   value={segmentConfig.maxCharsPerLine}
-                  onChange={(e) => onChangeSegment({ maxCharsPerLine: parseInt(e.target.value, 10) || 32 })}
+                  onChange={(e) => onChangeSegment({ maxCharsPerLine: parseInt(e.target.value, 10) || 18 })}
                 />
               </div>
               <div>
@@ -278,7 +293,7 @@ export default function StylingPanel({
                   max="4"
                   className="input-text"
                   value={segmentConfig.maxLines}
-                  onChange={(e) => onChangeSegment({ maxLines: parseInt(e.target.value, 10) || 2 })}
+                  onChange={(e) => onChangeSegment({ maxLines: parseInt(e.target.value, 10) || 1 })}
                 />
               </div>
             </div>
@@ -362,9 +377,15 @@ export default function StylingPanel({
             <FileText size={15} /> VTT
           </button>
         </div>
-        <button type="button" className="btn-primary" onClick={onBurnSubtitles} disabled={burning} style={{ width: '100%', justifyContent: 'center' }}>
-          <Flame size={16} /> {burning ? 'Rendering MP4…' : 'Burn captions to MP4'}
-        </button>
+        {canBurnVideo ? (
+          <button type="button" className="btn-primary" onClick={onBurnSubtitles} disabled={burning} style={{ width: '100%', justifyContent: 'center' }}>
+            <Flame size={16} /> {burning ? 'Rendering MP4…' : 'Burn captions to MP4'}
+          </button>
+        ) : (
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+            This job is audio-only. Export SRT or VTT — MP4 burn needs a video picture.
+          </p>
+        )}
       </div>
     </div>
   );

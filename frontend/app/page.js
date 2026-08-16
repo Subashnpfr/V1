@@ -3,8 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
-import { Youtube, ArrowRight, Video, Sparkles } from 'lucide-react';
+import { Youtube, ArrowRight, Video, Sparkles, Mic } from 'lucide-react';
 import UploadZone from './components/UploadZone';
+import VoiceRecorder from './components/VoiceRecorder';
 import ProgressBar from './components/ProgressBar';
 import AppShell from './components/AppShell';
 import { API_BASE } from './utils/api';
@@ -14,6 +15,7 @@ function DashboardContent() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [language, setLanguage] = useState('auto');
+  const [outputScript, setOutputScript] = useState('native');
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -21,7 +23,14 @@ function DashboardContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [processLogs, setProcessLogs] = useState([]);
+  const [uiReady, setUiReady] = useState(false);
+  const [createMode, setCreateMode] = useState('upload');
+  const [fromRecording, setFromRecording] = useState(false);
   const logEndRef = useRef(null);
+
+  useEffect(() => {
+    setUiReady(true);
+  }, []);
 
   useEffect(() => {
     if (!jobId || status === 'completed' || status === 'failed') return;
@@ -36,10 +45,14 @@ function DashboardContent() {
           if (res.data.logs && Array.isArray(res.data.logs)) {
             setProcessLogs(res.data.logs);
           }
-          if (res.data.status === 'completed') setLoading(false);
-          else if (res.data.status === 'failed') {
+          if (res.data.status === 'completed') {
             setLoading(false);
-            setError(res.data.error || 'Job processing failed');
+            if (fromRecording) {
+              router.push(`/editor?job_id=${jobId}`);
+            }
+          } else if (res.data.status === 'failed') {
+            setLoading(false);
+            setError(res.data.error || res.data.message || 'Job processing failed');
           }
         }
       } catch (err) {
@@ -48,14 +61,50 @@ function DashboardContent() {
     }, 500);
 
     return () => clearInterval(interval);
-  }, [jobId, status]);
+  }, [jobId, status, fromRecording, router]);
 
   useEffect(() => {
     if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [processLogs]);
 
+  const handleRecordingUpload = async ({ blob, filename }) => {
+    if (!blob) return;
+    setFromRecording(true);
+    setLoading(true);
+    setError(null);
+    setProgress(8);
+    setMessage('Uploading recording...');
+    const formData = new FormData();
+    formData.append('file', blob, filename || 'recording.webm');
+    formData.append('source_type', 'recording');
+    if (language && language !== 'auto') formData.append('language', language);
+    formData.append('output_script', language === 'en' ? 'native' : outputScript);
+    try {
+      const res = await axios.post(`${API_BASE}/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data.success) {
+        setJobId(res.data.job_id);
+        setStatus('processing');
+        setMessage('Transcribing...');
+      } else {
+        setLoading(false);
+        setError(res.data.message || 'Upload failed');
+      }
+    } catch (err) {
+      setLoading(false);
+      if (err.code === 'ERR_NETWORK' || !err.response) {
+        setError(`Cannot reach the API at ${API_BASE}. Start the FastAPI backend and try again.`);
+      } else {
+        const detail = err.response?.data?.detail;
+        setError(typeof detail === 'string' ? detail : err.message || 'Failed to upload recording');
+      }
+    }
+  };
+
   const handleFileUpload = async () => {
     if (!selectedFile) return;
+    setFromRecording(false);
     setLoading(true);
     setError(null);
     setProgress(5);
@@ -64,6 +113,7 @@ function DashboardContent() {
     const formData = new FormData();
     formData.append('file', selectedFile);
     if (language && language !== 'auto') formData.append('language', language);
+    formData.append('output_script', language === 'en' ? 'native' : outputScript);
 
     try {
       const res = await axios.post(`${API_BASE}/upload`, formData, {
@@ -95,6 +145,7 @@ function DashboardContent() {
   const handleYoutubeSubmit = async (e) => {
     e.preventDefault();
     if (!youtubeUrl.trim()) return;
+    setFromRecording(false);
     setLoading(true);
     setError(null);
     setProgress(10);
@@ -102,7 +153,8 @@ function DashboardContent() {
     try {
       const res = await axios.post(`${API_BASE}/youtube`, {
         url: youtubeUrl.trim(),
-        language: language === 'auto' ? null : language
+        language: language === 'auto' ? null : language,
+        output_script: language === 'en' ? 'native' : outputScript
       });
       if (res.data.success) {
         setJobId(res.data.job_id);
@@ -122,10 +174,11 @@ function DashboardContent() {
     <AppShell>
       <section className="hero">
         <div className="hero-copy">
-          <div className="eyebrow"><Sparkles size={14} /> Offline AI studio</div>
+          <div className="eyebrow"><Sparkles size={14} /> Local AI studio</div>
           <h1>Captions that feel <em>shipped</em>, not sketched.</h1>
           <p className="lead">
-            Transcribe locally with Whisper, style word-level animations, then burn an MP4 — your media never leaves this machine.
+            Transcribe with Whisper on this machine, then style and burn an MP4.
+            Optional translation uses Google Translate and sends caption text over the internet.
           </p>
           <div className="steps">
             <div className="step"><span className="step-index">1</span> Import</div>
@@ -138,6 +191,10 @@ function DashboardContent() {
         </div>
 
         <div className="create-card">
+          {!uiReady ? (
+            <p className="lead">Loading studio…</p>
+          ) : (
+            <>
           {error && <div className="alert alert-error" role="alert">{error}</div>}
 
           <label className="field-label" htmlFor="language">Spoken language</label>
@@ -147,13 +204,57 @@ function DashboardContent() {
             onChange={(e) => setLanguage(e.target.value)}
             disabled={loading}
             style={{ marginBottom: '1.15rem' }}
+            suppressHydrationWarning
           >
             <option value="auto">Auto detect</option>
             <option value="en">English</option>
             <option value="ne">Nepali (नेपाली)</option>
-            <option value="hi">Hindi (हिन्दी)</option>
+            <option value="hi">Hindi / Hinglish</option>
           </select>
 
+          {language !== 'en' && (
+            <>
+              <label className="field-label" htmlFor="output-script">Caption script</label>
+              <select
+                id="output-script"
+                value={outputScript}
+                onChange={(e) => setOutputScript(e.target.value)}
+                disabled={loading}
+                style={{ marginBottom: '1.15rem' }}
+              >
+                <option value="native">Native (Devanagari)</option>
+                <option value="roman">
+                  {language === 'hi' ? 'Romanized / Hinglish (still Hindi)' : 'Romanized Nepali (still Nepali)'}
+                </option>
+              </select>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '-0.65rem 0 1rem' }}>
+                Romanized changes letters, not meaning. Use Translate in the studio to change language.
+              </p>
+            </>
+          )}
+
+          <label className="field-label">Create captions</label>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+            <button
+              type="button"
+              className={createMode === 'upload' ? 'btn-primary' : 'btn-secondary'}
+              disabled={loading}
+              onClick={() => setCreateMode('upload')}
+            >
+              <Video size={16} /> Upload media
+            </button>
+            <button
+              type="button"
+              className={createMode === 'record' ? 'btn-primary' : 'btn-secondary'}
+              disabled={loading}
+              onClick={() => setCreateMode('record')}
+            >
+              <Mic size={16} /> Record
+            </button>
+          </div>
+
+          {createMode === 'upload' ? (
+            <>
           <label className="field-label">Upload media</label>
           <UploadZone
             onFileSelect={setSelectedFile}
@@ -166,6 +267,10 @@ function DashboardContent() {
                 <Video size={16} /> Generate captions
               </button>
             </div>
+          )}
+            </>
+          ) : (
+            <VoiceRecorder disabled={loading} onUseRecording={handleRecordingUpload} />
           )}
 
           <div className="divider"><span>OR</span></div>
@@ -191,6 +296,7 @@ function DashboardContent() {
                 value={youtubeUrl}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
                 disabled={loading}
+                suppressHydrationWarning
               />
             </div>
             <button type="submit" className="btn-primary" disabled={loading || !youtubeUrl.trim()}>
@@ -223,6 +329,8 @@ function DashboardContent() {
                 Open studio <ArrowRight size={16} />
               </button>
             </div>
+          )}
+            </>
           )}
         </div>
       </section>
