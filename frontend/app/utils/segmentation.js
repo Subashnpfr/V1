@@ -5,11 +5,11 @@
  */
 export function resegmentSubtitles(subtitles = [], options = {}) {
   const {
-    maxWords = 6,
-    maxCharsPerLine = 32,
-    maxLines = 2,
-    minDuration = 0.8,
-    maxDuration = 4.0
+    maxWords = 4,
+    maxCharsPerLine = 18,
+    maxLines = 1,
+    minDuration = 0.6,
+    maxDuration = 2.4
   } = options;
 
   if (!subtitles || subtitles.length === 0) return [];
@@ -19,8 +19,10 @@ export function resegmentSubtitles(subtitles = [], options = {}) {
   subtitles.forEach((sub) => {
     if (sub.words && Array.isArray(sub.words) && sub.words.length > 0) {
       sub.words.forEach((w) => {
+        const text = String(w.text || '').replace(/[|¦]/g, '').replace(/।/g, '.').trim();
+        if (!text || /^[|¦♪♫]+$/.test(text)) return;
         allWords.push({
-          text: w.text,
+          text,
           start: parseFloat(w.start),
           end: parseFloat(w.end),
           emphasized: !!w.emphasized

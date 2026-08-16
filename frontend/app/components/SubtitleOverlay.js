@@ -2,21 +2,27 @@
 
 import React from 'react';
 
-export function wrapSubtitleText(text, maxChars = 36) {
-  if (!text || text.length <= maxChars || text.includes('\n')) return text;
-  const words = text.split(/\s+/);
+export function wrapSubtitleText(text, maxChars = 18, maxWordsPerLine = 4) {
+  if (!text) return '';
+  if (text.includes('\n')) return text;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWordsPerLine && text.length <= maxChars) return text;
+
   const lines = [];
   let currLine = [];
   let currLen = 0;
 
   for (const w of words) {
-    if (currLen + w.length + (currLine.length > 0 ? 1 : 0) <= maxChars) {
-      currLine.push(w);
-      currLen += w.length + (currLine.length > 1 ? 1 : 0);
-    } else {
-      if (currLine.length > 0) lines.push(currLine.join(' '));
+    const extra = currLine.length > 0 ? 1 : 0;
+    const wouldOverflowChars = currLen + w.length + extra > maxChars;
+    const wouldOverflowWords = currLine.length >= maxWordsPerLine;
+    if (currLine.length > 0 && (wouldOverflowChars || wouldOverflowWords)) {
+      lines.push(currLine.join(' '));
       currLine = [w];
       currLen = w.length;
+    } else {
+      currLine.push(w);
+      currLen += w.length + extra;
     }
   }
   if (currLine.length > 0) lines.push(currLine.join(' '));
@@ -105,8 +111,9 @@ export default function SubtitleOverlay({
   const typewriterSpeed = animationConfig.typewriterSpeed || 'medium';
   const cursorOn = animationConfig.showCursor !== false;
 
-  const maxChars = styleConfig.maxCharsPerLine || 36;
-  const wrappedText = wrapSubtitleText(subtitle.text, maxChars);
+  const maxChars = styleConfig.maxCharsPerLine || 18;
+  const maxWordsPerLine = styleConfig.maxWordsPerLine || 4;
+  const wrappedText = wrapSubtitleText(subtitle.text, maxChars, maxWordsPerLine);
   const linesText = wrappedText.split('\n');
 
   let words = subtitle.words;
@@ -140,8 +147,10 @@ export default function SubtitleOverlay({
     linesOfWords.push({ text: lineStr, words: lineWordObjs });
   }
 
+  const accentMode = styleConfig.accentMode || 'none';
+
   const renderContent = () => {
-    if (preset === 'none') {
+    if (preset === 'none' && accentMode !== 'last-word') {
       return <span>{wrappedText}</span>;
     }
 
@@ -178,16 +187,18 @@ export default function SubtitleOverlay({
               const isSpoken = currentTime >= wObj.start && currentTime <= wObj.end;
               const isPast = currentTime > wObj.end;
               const isEmphasized = wObj.emphasized;
+              const isLastWord = lIdx === linesOfWords.length - 1 && idx === lObj.words.length - 1;
 
               let wordStyle = {
                 display: 'inline-block',
+                color: styleConfig.textColor || '#FFFFFF',
                 borderRadius: enablePill ? '6px' : '0',
                 padding: enablePill ? '0.1em 0.35em' : '0'
               };
 
               let wordClass = '';
 
-              if (isEmphasized) {
+              if (isEmphasized || (accentMode === 'last-word' && isLastWord)) {
                 wordStyle.fontWeight = '900';
                 wordStyle.color = highlightColor;
               }
@@ -256,7 +267,7 @@ export default function SubtitleOverlay({
           fontFamily: getFontFamilyStack(styleConfig.fontFamily),
           fontSize: `${model.fontPx}px`,
           fontWeight: styleConfig.fontWeight || '600',
-          color: styleConfig.textColor || '#FAFAFA',
+          color: styleConfig.textColor || '#FFFFFF',
           backgroundColor: bgOpacity > 0.05
             ? hexToRgba(styleConfig.bgColor || '#000000', bgOpacity)
             : 'transparent',

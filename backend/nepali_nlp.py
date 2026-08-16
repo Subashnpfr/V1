@@ -2,7 +2,7 @@
 """
 Lightweight 3-Stage Deterministic Nepali Correction Pipeline
 1. Unicode NFC & Whitespace Normalization
-2. Stage 1: Hunspell Spelling Verification & Fixes
+2. Stage 1: Dictionary spelling verification (word list, not Hunspell engine)
 3. Stage 2: Varnavinyas Orthography (danda '.' -> '।', spacing, punctuation)
 4. Stage 3: Custom Confusion Dictionary (backend/data/ne_corrections.json)
 5. Final Punctuation & Spacing Pass
@@ -124,9 +124,10 @@ def stage2_varnavinyas_orthography(text: str) -> Tuple[str, int]:
     fixed_count = 0
     original_text = text
 
-    # Punctuation normalization (. -> ।)
-    text = re.sub(r'(?<!\d)\.(?!\d)', '।', text)
-    text = re.sub(r'।।+', '।', text)
+    # Punctuation normalization (. -> ।) only for Devanagari lines
+    if re.search(r"[\u0900-\u097F]", text):
+        text = re.sub(r"(?<!\d)\.(?!\d)", "।", text)
+        text = re.sub(r"।।+", "।", text)
     text = re.sub(r'\s*\?\s*', '? ', text)
     text = re.sub(r'\s*!\s*', '! ', text)
 

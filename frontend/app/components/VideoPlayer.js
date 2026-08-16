@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Pause, Music, Volume2, VolumeX, Maximize2, Eye, Box, RefreshCw, Bug } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Eye, Box, RefreshCw, Bug } from 'lucide-react';
 import SubtitleOverlay from './SubtitleOverlay';
+import AudioCaptionStage from './AudioCaptionStage';
+import { applySeek } from '../utils/seekMedia';
 
 export default function VideoPlayer({
   videoUrl,
@@ -37,7 +39,7 @@ export default function VideoPlayer({
   useEffect(() => {
     if (seekTo == null || !mediaRef.current) return;
     if (Math.abs(mediaRef.current.currentTime - seekTo) < 0.05) return;
-    mediaRef.current.currentTime = seekTo;
+    applySeek(mediaRef.current, seekTo);
     setCurrentTime(seekTo);
     if (onTimeUpdate) onTimeUpdate(seekTo);
   }, [seekTo, onTimeUpdate]);
@@ -60,7 +62,30 @@ export default function VideoPlayer({
   }, [onTimeUpdate]);
 
   const updateVideoBounds = () => {
-    if (!mediaRef.current || !containerRef.current || isAudio) return;
+    if (!containerRef.current) return;
+    if (isAudio) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const cW = rect.width;
+      const cH = rect.height;
+      if (!cW || !cH) return;
+      setVideoBounds({
+        left: 0,
+        top: 0,
+        width: Math.round(cW),
+        height: Math.round(cH),
+        intrinsicW: 1920,
+        intrinsicH: 1080
+      });
+      if (onVideoMetadata) {
+        onVideoMetadata({
+          width: 1920,
+          height: 1080,
+          duration: mediaRef.current?.duration || 0
+        });
+      }
+      return;
+    }
+    if (!mediaRef.current) return;
     const vW = mediaRef.current.videoWidth || 1920;
     const vH = mediaRef.current.videoHeight || 1080;
     const vAspect = vW / vH;
@@ -103,12 +128,24 @@ export default function VideoPlayer({
 
   useEffect(() => {
     window.addEventListener('resize', updateVideoBounds);
+    if (isAudio) setTimeout(updateVideoBounds, 50);
     return () => window.removeEventListener('resize', updateVideoBounds);
   }, [aspectRatio, isAudio]);
 
   const handleLoadedMetadata = () => {
     if (mediaRef.current) {
       setDuration(mediaRef.current.duration || 0);
+      if (isAudio) {
+        if (onVideoMetadata) {
+          onVideoMetadata({
+            width: 1920,
+            height: 1080,
+            duration: mediaRef.current.duration || 0
+          });
+        }
+        setTimeout(updateVideoBounds, 50);
+        return;
+      }
       if (!isAudio) {
         const width = mediaRef.current.videoWidth || 1920;
         const height = mediaRef.current.videoHeight || 1080;
@@ -438,9 +475,8 @@ export default function VideoPlayer({
       maxHeight: '560px',
       boxShadow: 'var(--shadow-subtle)'
     }}>
-      {/* Top Preview Controls Bar (Zoom, Safe Area, Box Bounds, Debug, Reset) */}
-      {!isAudio && (
-        <div style={{
+      {/* Top Preview Controls Bar */}
+      <div style={{
           width: '100%',
           display: 'flex',
           alignItems: 'center',
@@ -509,159 +545,32 @@ export default function VideoPlayer({
             </button>
           </div>
         </div>
-      )}
 
       {isAudio ? (
-        /* AUDIO ONLY PLAYER DISPLAY */
-        <div style={{
-          width: '100%',
-          height: '340px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '1.5rem',
-          background: 'linear-gradient(180deg, #111111 0%, #0B0B0B 100%)',
-          position: 'relative'
-        }}>
-          <audio
-            ref={mediaRef}
-            src={videoUrl}
-            onLoadedMetadata={handleLoadedMetadata}
-            onTimeUpdate={handleManualTimeUpdate}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            style={{ display: 'none' }}
-          />
-
-          {/* Top Audio Badge */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            background: 'var(--surface-elevated)',
-            border: '1px solid var(--border)',
-            padding: '0.4rem 0.85rem',
-            borderRadius: '20px',
-            fontSize: '12px',
-            color: 'var(--text-primary)'
-          }}>
-            <Music size={14} style={{ color: 'var(--accent)' }} /> Audio Track Active
-          </div>
-
-          {/* Center Generated Waveform Bars */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '4px',
-            height: '64px',
-            width: '100%',
-            maxWidth: '380px',
-            margin: '1rem 0'
-          }}>
-            {Array.from({ length: 32 }).map((_, i) => {
-              const animDelay = `${(i % 5) * 0.25}s`;
-              const animDur = `${0.8 + (i % 3) * 0.3}s`;
-              return (
-                <div
-                  key={i}
-                  className="waveform-bar"
-                  style={{
-                    height: `${20 + ((i * 17) % 44)}px`,
-                    animationPlayState: isPlaying ? 'running' : 'paused',
-                    animationDelay: animDelay,
-                    animationDuration: animDur,
-                    background: isPlaying ? 'var(--accent)' : 'var(--border)'
-                  }}
-                />
-              );
-            })}
-          </div>
-
-          {/* Subtitle Overlay for Audio */}
-          {activeSub && activeSub.text && (
-            <div style={{
-              textAlign: 'center',
-              pointerEvents: 'none',
-              zIndex: 10,
-              margin: '0.5rem 0',
-              width: '90%'
-            }}>
-              <span
-                style={{
-                  fontFamily: getFontFamilyStack(),
-                  fontSize: `${model.fontPx}px`,
-                  fontWeight: styleConfig.fontWeight || '600',
-                  color: styleConfig.textColor || '#FAFAFA',
-                  backgroundColor: hexToRgba(styleConfig.bgColor || '#000000', styleConfig.bgOpacity ?? 0.6),
-                  padding: '0.45rem 1rem',
-                  borderRadius: '10px',
-                  textShadow: getOutlineShadowStyle(),
-                  display: 'inline-block',
-                  whiteSpace: 'pre-wrap',
-                  lineHeight: 1.15,
-                  maxWidth: '100%',
-                  wordBreak: 'break-word'
-                }}
-              >
-                {renderAnimatedSubtitle()}
-              </span>
-            </div>
-          )}
-
-          {/* Bottom Audio Controls */}
-          <div style={{
-            width: '100%',
-            maxWidth: '460px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.75rem',
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            padding: '0.5rem 1rem',
-            borderRadius: '12px'
-          }}>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={togglePlay}
-              aria-label={isPlaying ? 'Pause Audio' : 'Play Audio'}
-              style={{ padding: '0.45rem', borderRadius: '50%', width: '36px', height: '36px', justifyContent: 'center' }}
-            >
-              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            </button>
-
-            <span style={{ fontSize: '12px', fontFamily: 'monospace', minWidth: '40px', color: 'var(--text-secondary)' }}>
-              {formatTime(currentTime)}
-            </span>
-
-            <input
-              type="range"
-              min="0"
-              max={duration || 100}
-              step="0.1"
-              value={currentTime}
-              onChange={handleSeek}
-              aria-label="Seek audio playback"
-              style={{ flex: 1 }}
-            />
-
-            <span style={{ fontSize: '12px', fontFamily: 'monospace', minWidth: '40px', color: 'var(--text-secondary)' }}>
-              {formatTime(duration)}
-            </span>
-
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={toggleMute}
-              aria-label={isMuted ? 'Unmute Audio' : 'Mute Audio'}
-              style={{ padding: '0.4rem', borderRadius: '6px' }}
-            >
-              {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-            </button>
-          </div>
-        </div>
+        <AudioCaptionStage
+          mediaRef={mediaRef}
+          containerRef={containerRef}
+          videoUrl={videoUrl}
+          activeSub={activeSub}
+          styleConfig={styleConfig}
+          animationConfig={animationConfig}
+          currentTime={currentTime}
+          duration={duration}
+          isPlaying={isPlaying}
+          isMuted={isMuted}
+          zoomScale={zoomScale}
+          showSafeArea={showSafeArea}
+          showBoxBounds={showBoxBounds}
+          targetHeight={videoBounds.height || 540}
+          onLoadedMetadata={handleLoadedMetadata}
+          onTimeUpdate={handleManualTimeUpdate}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onTogglePlay={togglePlay}
+          onSeek={handleSeek}
+          onToggleMute={toggleMute}
+          formatTime={formatTime}
+        />
       ) : (
         /* STANDARD VIDEO PLAYER DISPLAY - CONSTRAINED RATIO CANVAS BOX */
         <div

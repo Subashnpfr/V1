@@ -9,13 +9,31 @@
   <img src="https://img.shields.io/badge/License-MIT-brightgreen?style=for-the-badge" alt="MIT License"/>
 </div>
 
-<p align="center"><strong>Free • 100% Offline • Open Source • AI Speech‑to‑Text & Subtitle Studio</strong></p>
+<p align="center"><strong>Local-first • Open Source • Speech-to-text & subtitle studio</strong></p>
 
 ---
 
-## ✨ Overview
+## Overview
 
-V1 Auto Captions Studio is a **premium‑grade, offline‑first** web application that generates, edits, styles, translates, and burns subtitles into videos. It leverages **OpenAI Whisper** (via `faster-whisper`) and **FFmpeg** to keep your data private and processing local.
+V1 Captions is a **local-first** studio: Whisper transcription and FFmpeg burns run on this computer. The API binds to **127.0.0.1** and is **not** a multi-user SaaS. There is no account system.
+
+**Network exceptions (not offline):**
+- First Whisper model download (Hugging Face)
+- Optional **Google Translate** (caption text is sent to Google; you must confirm in the UI)
+- Optional YouTube import (yt-dlp)
+- YouTube/FFmpeg as needed for merge
+
+Jobs persist as `outputs/<uuid>.job.json` so a backend restart can recover a project.
+
+**Limits:** uploads max 500 MB; voice recordings max **30 minutes** (no minimum length); at most 2 active transcriptions; YouTube downloads max 2 GB; YouTube URLs must be `https` on youtube.com / youtu.be.
+
+**Voice recording:** Use **Record** on the home screen. The browser asks for microphone permission, records locally with `MediaRecorder`, then uploads once to the local API (`source_type=recording`). Whisper transcribes the same way as uploaded audio. Preview the blob in the browser before upload. Chrome, Edge, Firefox, and Safari are handled via MIME feature detection (`audio/webm;codecs=opus` preferred; `audio/mp4` fallback). This is **not** a claim that every browser was tested in this change.
+
+**Privacy:** Microphone audio is captured in the browser. After **Use recording**, it is sent to the local backend and processed with Whisper on this machine. Optional **Google Translate** still sends caption text to Google. First Whisper model download uses Hugging Face. Do not treat the product as 100% offline.
+
+**Audio → MP4:** Recordings and uploaded audio (MP3, WAV, M4A, …) burn onto a **black 1920×1080 still** as the video picture, with studio captions on top. Restart the API after pulling this change. SRT and VTT remain available.
+
+**Security:** Do not expose port 8000 on a public network. Job IDs are UUIDs; CORS allows localhost:3000 only.
 
 ---
 
@@ -48,7 +66,7 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 4. Open the app in your browser: `http://localhost:3000`
 
 *Manual alternative*:
-- Backend (from repo root): `python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload`
+- Backend (from repo root): `python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000`
 - Frontend: `npm run dev --prefix frontend`
 
 ---
@@ -58,10 +76,11 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 ### API Endpoints
 | Method | Endpoint | Description |
 |:---|:---|:---|
-| `POST` | `/upload` | Upload a video/audio file for Whisper transcription |
+| `POST` | `/upload` | Upload video/audio **or** a browser recording (`source_type=recording`) |
 | `POST` | `/youtube` | Transcribe a YouTube video directly |
 | `WS` | `/ws/logs/{job_id}` | Real‑time processing logs |
-| `POST` | `/burn/{job_id}` | Burn styled subtitles into an MP4 (PNG overlay or ASS) |
+| `POST` | `/script/{job_id}` | Convert caption **script** (native ↔ Romanized/Hinglish). Not translation. |
+| `POST` | `/retranscribe/{job_id}` | Re-run Whisper on the same file with a chosen spoken language |
 | `GET` | `/download/{job_id}.srt` | Download generated SRT |
 | `GET` | `/download/{job_id}.vtt` | Download generated VTT |
 | `GET` | `/download/{job_id}.mp4` | Download burned‑in video |
@@ -84,19 +103,39 @@ V1 Auto Captions Studio is a **premium‑grade, offline‑first** web applicatio
 
 ---
 
-## ⚙️ Features
-- **Offline‑first**: All processing runs locally, no cloud services.
-- **Multi‑language Whisper** support with GPU acceleration via `faster-whisper`.
-- **Dynamic subtitle styling**: Custom fonts, colors, outlines, and positioning.
-- **Batch processing**: Queue multiple videos for automatic transcription and burning.
-- **YouTube integration**: Directly fetch and caption YouTube videos.
-- **Export formats**: SRT, VTT, and burned‑in MP4.
-- **Responsive UI** built with Next.js 15 and React 19.
-- **Robust security**: pinned Next.js 15.5.23, explicit `sharp` override, and no wildcard image remote patterns.
+## Features
+- Voice recording (microphone → local upload → Whisper → existing editor)
+- Caption **language** vs **script**: Nepali Devanagari, Romanized Nepali, Hindi/Hinglish, English (transliteration is not translation)
+- Local Whisper transcription (models download on first use)
+- Optional Google Translate (internet; caption text leaves the machine)
+- YouTube import (https YouTube URLs only)
+- Styled ASS burn via FFmpeg
+- SRT / VTT / MP4 export
+- Job recovery from `outputs/<id>.job.json` after restart
+
+Tests: `python -m pytest backend -q` from repo root (set `PYTHONPATH=backend`) and `npm test --prefix frontend`.
 
 ---
 
-## 🛠️ Development
+## Caption language vs script
+
+Spoken **language** (Nepali / Hindi / English / auto) is what Whisper hears.
+
+**Script** is how that language is written:
+
+| Speech | Native | Romanized (same meaning) |
+|---|---|---|
+| Nepali | तपाईंलाई कस्तो छ? | Tapailai kasto chha? |
+| Hindi | आप कैसे हैं? | Aap kaise hain? (Hinglish) |
+| English | How are you? | (Latin only — no extra romanize step) |
+
+**Convert script** transliterates. **Translate** changes language (Google; internet).
+
+V1 romanization is local (no extra API). Convention: `छ` → `chha`, `छु` → `chu`, `आ` → `aa`, dependent `ा` → `a`, danda `।` → `.`, Devanagari digits → ASCII, proper nouns like काठमाडौं → Kathmandu.
+
+---
+
+## Development
 ```bash
 # Backend (auto‑reload)
 uvicorn backend.app:app --reload

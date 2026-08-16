@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import SubtitleOverlay from '../components/SubtitleOverlay';
 import { renderNodeToPngDataUrl } from './renderSubtitleToPng';
 
+const MAX_OVERLAY_FRAMES = 48;
+
 export async function generateSubtitlePngFrames({
   subtitles = [],
   styleConfig = {},
@@ -56,8 +58,8 @@ export async function generateSubtitlePngFrames({
       ].includes(preset);
 
       if (isContinuousAnim) {
-        // Continuous animation sampling (10 fps -> 0.10s step) for super fluid motion
-        const step = 0.10;
+        const remainingBudget = Math.max(1, MAX_OVERLAY_FRAMES - rawFrames.length - (subtitles.length - i));
+        const step = Math.max(0.10, totalDur / remainingBudget);
         let curr = subStart;
         while (curr < subEnd) {
           const next = Math.min(subEnd, curr + step);
@@ -164,5 +166,15 @@ export async function generateSubtitlePngFrames({
     throw new Error('No subtitle frames were generated. Check that subtitles have text content.');
   }
 
-  return optimizedFrames;
+  let capped = optimizedFrames;
+  while (capped.length > MAX_OVERLAY_FRAMES) {
+    const next = [];
+    for (let i = 0; i < capped.length; i += 2) {
+      if (i + 1 >= capped.length) next.push(capped[i]);
+      else next.push({ ...capped[i], end: capped[i + 1].end });
+    }
+    capped = next;
+  }
+
+  return capped;
 }

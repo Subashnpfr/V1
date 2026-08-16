@@ -1,7 +1,7 @@
 # Created by Subash Nepal · nepalsubash.com.np
 """
 Nepali text correction — delegates to the full nepali_nlp pipeline
-(Hunspell + Varnavinyas + custom dictionary) with a fail-safe wrapper.
+only when the line is Devanagari. English/mixed Latin is sanitized only.
 """
 
 import sys
@@ -12,6 +12,7 @@ if str(_backend_root) not in sys.path:
     sys.path.insert(0, str(_backend_root))
 
 from nepali_nlp import process_nepali_vyakaran_pipeline
+from utils.caption_text import is_devanagari_text, sanitize_caption_text
 
 
 def process_nepali_correction_pipeline(text: str) -> str:
@@ -20,7 +21,12 @@ def process_nepali_correction_pipeline(text: str) -> str:
         return text or ""
 
     try:
-        return process_nepali_vyakaran_pipeline(text)
+        cleaned = sanitize_caption_text(text)
+        if not cleaned:
+            return ""
+        if is_devanagari_text(cleaned):
+            return process_nepali_vyakaran_pipeline(cleaned)
+        return cleaned
     except Exception as e:
         print(f"[Grammar] Fail-safe caught error: {e}")
-        return text
+        return sanitize_caption_text(text)

@@ -6,7 +6,7 @@
     "setup": "npm install",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "test": "node --test app/utils/seekMedia.test.js app/utils/recordingMime.test.js app/utils/recordingMachine.test.js"
   },
   "dependencies": {
     "axios": "^1.11.0",
