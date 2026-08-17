@@ -1,4 +1,4 @@
-# Speech / library licenses used by V1 Captions (Kalakaar foundation)
+# Speech / library licenses used by V1 Captions
 
 This project does not vendor Whisper weights. Models are downloaded at runtime by `faster-whisper` / CTranslate2 from Hugging Face when first used.
 
