@@ -2,7 +2,7 @@ from utils.whisper_decode import whisper_transcribe_options
 
 
 def test_nepali_uses_beam_search_and_prompt():
-    opts = whisper_transcribe_options("ne")
+    opts = whisper_transcribe_options("ne", "high_accuracy")
     assert opts["beam_size"] == 5
     assert opts["language"] == "ne"
     assert "नेपाली" in opts["initial_prompt"]

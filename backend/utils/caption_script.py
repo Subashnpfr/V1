@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from utils.devanagari_romanize import romanize_caption, romanize_timed_words
+from utils.devanagari_romanize import romanize_nepali, romanize_timed_words
 from utils.script_model import resolve_transliteration_mode
 
 
 def snapshot_native(cue: dict[str, Any]) -> dict[str, Any]:
     item = dict(cue)
     if not item.get("native_text"):
-        item["native_text"] = item.get("text") or ""
+        item["native_text"] = item.get("original_text") or item.get("text") or ""
+    item["original_text"] = item.get("native_text") or ""
     if item.get("native_words") is None and item.get("words") is not None:
         item["native_words"] = [dict(w) for w in item["words"]]
     item.setdefault("text_edited", False)
@@ -41,7 +42,7 @@ def apply_output_script(
                 item["words"] = [dict(w) for w in native_words]
         else:
             try:
-                item["text"] = romanize_caption(native)
+                item["text"] = romanize_nepali(native)
                 item["words"] = romanize_timed_words(
                     native_words if native_words is not None else item.get("words")
                 )

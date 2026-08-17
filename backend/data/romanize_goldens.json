@@ -1,0 +1,322 @@
+[
+  {
+    "input": "क",
+    "expected": "Ka"
+  },
+  {
+    "input": "ख",
+    "expected": "Kha"
+  },
+  {
+    "input": "ग",
+    "expected": "Ga"
+  },
+  {
+    "input": "घ",
+    "expected": "Gha"
+  },
+  {
+    "input": "च",
+    "expected": "Cha"
+  },
+  {
+    "input": "छ",
+    "expected": "Chha"
+  },
+  {
+    "input": "ज",
+    "expected": "Ja"
+  },
+  {
+    "input": "ट",
+    "expected": "Ta"
+  },
+  {
+    "input": "त",
+    "expected": "Ta"
+  },
+  {
+    "input": "थ",
+    "expected": "Tha"
+  },
+  {
+    "input": "द",
+    "expected": "Da"
+  },
+  {
+    "input": "ध",
+    "expected": "Dha"
+  },
+  {
+    "input": "न",
+    "expected": "Na"
+  },
+  {
+    "input": "प",
+    "expected": "Pa"
+  },
+  {
+    "input": "फ",
+    "expected": "Pha"
+  },
+  {
+    "input": "ब",
+    "expected": "Ba"
+  },
+  {
+    "input": "भ",
+    "expected": "Bha"
+  },
+  {
+    "input": "म",
+    "expected": "Ma"
+  },
+  {
+    "input": "य",
+    "expected": "Ya"
+  },
+  {
+    "input": "र",
+    "expected": "Ra"
+  },
+  {
+    "input": "ल",
+    "expected": "La"
+  },
+  {
+    "input": "व",
+    "expected": "Wa"
+  },
+  {
+    "input": "श",
+    "expected": "Sha"
+  },
+  {
+    "input": "ष",
+    "expected": "Sha"
+  },
+  {
+    "input": "स",
+    "expected": "Sa"
+  },
+  {
+    "input": "ह",
+    "expected": "Ha"
+  },
+  {
+    "input": "अ",
+    "expected": "A"
+  },
+  {
+    "input": "आ",
+    "expected": "Aa"
+  },
+  {
+    "input": "इ",
+    "expected": "I"
+  },
+  {
+    "input": "ई",
+    "expected": "I"
+  },
+  {
+    "input": "उ",
+    "expected": "U"
+  },
+  {
+    "input": "ऊ",
+    "expected": "U"
+  },
+  {
+    "input": "ए",
+    "expected": "E"
+  },
+  {
+    "input": "ऐ",
+    "expected": "Ai"
+  },
+  {
+    "input": "ओ",
+    "expected": "O"
+  },
+  {
+    "input": "औ",
+    "expected": "Au"
+  },
+  {
+    "input": "का",
+    "expected": "Ka"
+  },
+  {
+    "input": "की",
+    "expected": "Ki"
+  },
+  {
+    "input": "कु",
+    "expected": "Ku"
+  },
+  {
+    "input": "के",
+    "expected": "Ke"
+  },
+  {
+    "input": "को",
+    "expected": "Ko"
+  },
+  {
+    "input": "खा",
+    "expected": "Kha"
+  },
+  {
+    "input": "गा",
+    "expected": "Ga"
+  },
+  {
+    "input": "चा",
+    "expected": "Cha"
+  },
+  {
+    "input": "जा",
+    "expected": "Ja"
+  },
+  {
+    "input": "टा",
+    "expected": "Ta"
+  },
+  {
+    "input": "ता",
+    "expected": "Ta"
+  },
+  {
+    "input": "दा",
+    "expected": "Da"
+  },
+  {
+    "input": "ना",
+    "expected": "Na"
+  },
+  {
+    "input": "पा",
+    "expected": "Pa"
+  },
+  {
+    "input": "बा",
+    "expected": "Ba"
+  },
+  {
+    "input": "मा",
+    "expected": "Ma"
+  },
+  {
+    "input": "या",
+    "expected": "Ya"
+  },
+  {
+    "input": "रा",
+    "expected": "Ra"
+  },
+  {
+    "input": "ला",
+    "expected": "La"
+  },
+  {
+    "input": "वा",
+    "expected": "Wa"
+  },
+  {
+    "input": "सा",
+    "expected": "Sa"
+  },
+  {
+    "input": "हा",
+    "expected": "Ha"
+  },
+  {
+    "input": "छु",
+    "expected": "Chu"
+  },
+  {
+    "input": "छि",
+    "expected": "Chi"
+  },
+  {
+    "input": "छो",
+    "expected": "Cho"
+  },
+  {
+    "input": "हो",
+    "expected": "Ho"
+  },
+  {
+    "input": "बाट",
+    "expected": "Bat"
+  },
+  {
+    "input": "सँग",
+    "expected": "Saang"
+  },
+  {
+    "input": "पछि",
+    "expected": "Pachi"
+  },
+  {
+    "input": "अगाडि",
+    "expected": "Agadi"
+  },
+  {
+    "input": "बिहान",
+    "expected": "Bihan"
+  },
+  {
+    "input": "बेलुका",
+    "expected": "Beluk"
+  },
+  {
+    "input": "रात",
+    "expected": "Rat"
+  },
+  {
+    "input": "पानी",
+    "expected": "Pani"
+  },
+  {
+    "input": "खाना",
+    "expected": "Khan"
+  },
+  {
+    "input": "काम",
+    "expected": "Kam"
+  },
+  {
+    "input": "मान्छे",
+    "expected": "Manche"
+  },
+  {
+    "input": "केटी",
+    "expected": "Keti"
+  },
+  {
+    "input": "केटा",
+    "expected": "Ket"
+  },
+  {
+    "input": "आमा",
+    "expected": "Aama"
+  },
+  {
+    "input": "बुबा",
+    "expected": "Bub"
+  },
+  {
+    "input": "दाजु",
+    "expected": "Daju"
+  },
+  {
+    "input": "बहिनी",
+    "expected": "Bahini"
+  },
+  {
+    "input": "साथी",
+    "expected": "Sathi"
+  }
+]

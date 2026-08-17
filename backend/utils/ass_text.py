@@ -37,12 +37,18 @@ ALLOWED_ANIM = {
 }
 
 
-def wrap_caption_lines(text: str, max_words: int = 4, max_chars: int = 18) -> list[str]:
+def wrap_caption_lines(text: str, max_words: int | None = None, max_chars: int | None = None) -> list[str]:
     raw = (text or "").strip()
     if not raw:
         return []
     if "\n" in raw:
         return [ln.strip() for ln in raw.split("\n") if ln.strip()]
+    from utils.caption_text import is_devanagari_text
+    latin = not is_devanagari_text(raw)
+    if max_chars is None:
+        max_chars = 32 if latin else 18
+    if max_words is None:
+        max_words = 6 if latin else 4
     words = raw.split()
     lines: list[str] = []
     curr: list[str] = []

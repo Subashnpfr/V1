@@ -28,7 +28,7 @@ OUTPUTS_DIR = BACKEND_DIR / "outputs"
 TEMP_DIR = BACKEND_DIR / "temp"
 
 from utils.nepali_correction import process_nepali_correction_pipeline
-from utils.caption_text import is_junk_token, sanitize_caption_text
+from utils.caption_text import is_devanagari_text, is_junk_token, sanitize_caption_text
 from utils.ffmpeg_tools import (
     ffmpeg_available,
     ffmpeg_location_dir,
@@ -65,7 +65,10 @@ from utils.recording_limits import (
     MAX_RECORDING_DURATION_SECONDS,
     recording_duration_error,
 )
-from utils.whisper_decode import whisper_transcribe_options
+from utils.whisper_decode import get_transcription_config, requested_whisper_model, whisper_transcribe_options
+from utils.transcription_quality import coerce_transcription_quality, normalize_transcription_quality
+from utils.nepali_asr_correct import correct_nepali_asr
+from utils.nepali_normalize import normalize_nepali_text
 
 app = FastAPI(title="Auto Captions Studio API")
 
@@ -84,6 +87,7 @@ cpu_worker_count = max(1, (os.cpu_count() or 4) - 1)
 
 # Global Model Cache (loaded once on demand per language)
 MODEL_CACHE: Dict[str, Any] = {}
+MODEL_RUNTIME: Dict[str, dict] = {}
 
 def get_device_and_compute():
     device = "cpu"
@@ -112,10 +116,12 @@ def load_whisper_model(key: str, name: str, preferred_compute: Optional[str] = N
 
     model = None
     last_err = None
+    used_device, used_ct = device, compute_type
     for ct in compute_try:
         print(f"Loading WhisperModel '{name}' for key '{key}' on {device} ({ct})...")
         try:
             model = WhisperModel(name, device=device, compute_type=ct, cpu_threads=cpu_worker_count)
+            used_device, used_ct = device, ct
             break
         except Exception as e:
             last_err = e
@@ -123,8 +129,10 @@ def load_whisper_model(key: str, name: str, preferred_compute: Optional[str] = N
     if model is None:
         print(f"Primary load failed ({last_err}). Using CPU int8 fallback...")
         model = WhisperModel(name, device="cpu", compute_type="int8", cpu_threads=cpu_worker_count)
+        used_device, used_ct = "cpu", "int8"
 
     MODEL_CACHE[key] = model
+    MODEL_RUNTIME[key] = {"device": used_device, "compute_type": used_ct, "name": name}
     return model
 
 FFMPEG_MISSING_MSG = (
@@ -145,30 +153,68 @@ async def startup_event():
     else:
         print(f"WARNING: {FFMPEG_MISSING_MSG}")
 
-def get_whisper_model_and_language(language_code: Optional[str]):
+def get_whisper_model_and_language(language_code: Optional[str], quality: Optional[str] = "fast"):
     """
-    English -> small
-    Hindi   -> medium
-    Nepali  -> large-v3, then medium if load fails
-    Auto    -> medium
+    Returns (model, forced_lang, label, meta).
+    meta always records requested vs actual model (no silent High Accuracy lie).
     """
     lang = coerce_source_language(language_code)
+    cfg = get_transcription_config(quality=quality, language=None if lang == "auto" else lang)
+    requested = cfg["requested_model"]
+    runtime_key = "mix"
+    actual = requested
+    fallback = False
+    reason = None
+    label = "Auto language model (medium)"
+    forced = None
+
     if lang == "en":
+        runtime_key = "en"
         model = load_whisper_model("en", "small")
-        return model, "en", "English model (small)"
-    if lang == "hi":
+        forced, label = "en", "English model (small)"
+        actual = "small"
+    elif lang == "hi":
+        runtime_key = "hi"
         model = load_whisper_model("hi", "medium")
-        return model, "hi", "Hindi model (medium)"
-    if lang == "ne":
-        try:
-            model = load_whisper_model("ne", "large-v3", preferred_compute="int8_float32")
-            return model, "ne", "Nepali model (large-v3)"
-        except Exception as e:
-            print(f"Nepali large-v3 unavailable ({e}). Falling back to medium.")
+        forced, label = "hi", "Hindi model (medium)"
+        actual = "medium"
+    elif lang == "ne":
+        if cfg["quality"] == "high_accuracy":
+            try:
+                runtime_key = "ne"
+                model = load_whisper_model("ne", "large-v3", preferred_compute="int8_float32")
+                forced, label = "ne", "Nepali model (large-v3, high accuracy)"
+                actual = "large-v3"
+            except Exception as e:
+                print(f"Nepali large-v3 unavailable ({e}). Falling back to medium.")
+                runtime_key = "ne-medium"
+                model = load_whisper_model("ne-medium", "medium")
+                forced, label = "ne", "Nepali model (medium fallback)"
+                actual = "medium"
+                fallback = True
+                reason = "insufficient_memory" if "memory" in str(e).lower() else "load_failed"
+        else:
+            runtime_key = "ne-medium"
             model = load_whisper_model("ne-medium", "medium")
-            return model, "ne", "Nepali model (medium fallback)"
-    model = load_whisper_model("mix", "medium")
-    return model, None, "Auto language model (medium)"
+            forced, label = "ne", "Nepali model (medium, fast)"
+            actual = "medium"
+    else:
+        model = load_whisper_model("mix", "medium")
+        actual = "medium"
+
+    rt = MODEL_RUNTIME.get(runtime_key) or {}
+    meta = {
+        "quality": cfg["quality"],
+        "requested_model": requested,
+        "actual_model": actual,
+        "fallback": fallback,
+        "fallback_reason": reason,
+        "device": rt.get("device"),
+        "compute_type": rt.get("compute_type"),
+        "beam_size": cfg["beam_size"],
+        "vad_enabled": cfg["vad_enabled"],
+    }
+    return model, forced, label, meta
 
 jobs: Dict[str, dict] = {}
 MAX_ACTIVE_JOBS = 2
@@ -220,6 +266,7 @@ class YouTubeRequest(BaseModel):
     url: str
     language: Optional[str] = None
     output_script: Optional[str] = None
+    transcription_quality: Optional[str] = None
 
 class SubtitleItem(BaseModel):
     id: int
@@ -244,6 +291,7 @@ class ScriptConvertRequest(BaseModel):
 class RetranscribeRequest(BaseModel):
     language: Optional[str] = None
     output_script: Optional[str] = None
+    transcription_quality: Optional[str] = None
 
 class OverlayFrame(BaseModel):
     start: float
@@ -637,7 +685,8 @@ def cues_from_whisper_segments(segments) -> list:
                 words.append({
                     "text": token,
                     "start": round(w.start, 3),
-                    "end": round(w.end, 3)
+                    "end": round(w.end, 3),
+                    **({"confidence": round(float(w.probability), 3)} if getattr(w, "probability", None) is not None else {}),
                 })
         else:
             raw_words = sanitize_caption_text(seg.text).split()
@@ -653,7 +702,9 @@ def cues_from_whisper_segments(segments) -> list:
                     "end": round(seg.start + (i + 1) * w_dur, 3)
                 })
 
-        cue_text = process_nepali_correction_pipeline(seg.text)
+        cue_text = sanitize_caption_text(seg.text)
+        if is_devanagari_text(cue_text):
+            cue_text, words = correct_nepali_asr(cue_text, words=words or None)
         if not cue_text and words:
             cue_text = " ".join(w["text"] for w in words)
         if not cue_text:
@@ -719,9 +770,36 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
         update_job(job_id, progress=28, status="loading speech model")
         add_log(job_id, "Audio extracted. Loading Whisper (first run downloads the model and can take several minutes)...")
 
-        model, forced_lang, model_label = get_whisper_model_and_language(language)
-        transcribe_kwargs = whisper_transcribe_options(forced_lang)
-        add_log(job_id, f"Using {model_label} (beam {transcribe_kwargs.get('beam_size', 1)})")
+        quality = coerce_transcription_quality((jobs.get(job_id) or {}).get("transcription_quality"))
+        cfg = get_transcription_config(quality=quality, language=None if coerce_source_language(language) == "auto" else coerce_source_language(language))
+        add_log(job_id, f"requested_quality={cfg['quality']} requested_model={cfg['requested_model']}")
+        model, forced_lang, model_label, asr_meta = get_whisper_model_and_language(language, quality)
+        transcribe_kwargs = whisper_transcribe_options(forced_lang, quality)
+        if asr_meta.get("fallback"):
+            add_log(
+                job_id,
+                f"quality={asr_meta['quality']} requested_model={asr_meta['requested_model']} "
+                f"actual_model={asr_meta['actual_model']} fallback=true reason={asr_meta.get('fallback_reason')} "
+                f"device={asr_meta.get('device')} compute_type={asr_meta.get('compute_type')}",
+            )
+        else:
+            add_log(
+                job_id,
+                f"quality={asr_meta['quality']} requested_model={asr_meta['requested_model']} "
+                f"actual_model={asr_meta['actual_model']} fallback=false "
+                f"device={asr_meta.get('device')} compute_type={asr_meta.get('compute_type')} beam={asr_meta.get('beam_size')} vad={asr_meta.get('vad_enabled')}",
+            )
+        update_job(
+            job_id,
+            transcription_quality=asr_meta["quality"],
+            requested_model=asr_meta["requested_model"],
+            actual_model=asr_meta["actual_model"],
+            asr_fallback=asr_meta["fallback"],
+            asr_fallback_reason=asr_meta.get("fallback_reason"),
+            asr_device=asr_meta.get("device"),
+            asr_compute_type=asr_meta.get("compute_type"),
+            asr_beam_size=asr_meta.get("beam_size"),
+        )
 
         add_log(job_id, "Transcribing speech — this stays on this step until the whole file is done")
         update_job(job_id, progress=40, status="transcribing")
@@ -735,6 +813,12 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
                     add_log(job_id, f"large-v3 decode failed ({transcribe_err}); retrying with medium")
                     model = load_whisper_model("ne-medium", "medium")
                     model_label = "Nepali model (medium fallback)"
+                    update_job(
+                        job_id,
+                        actual_model="medium",
+                        asr_fallback=True,
+                        asr_fallback_reason="decode_failed",
+                    )
                     return _run_whisper_pass(model, clean_audio, kwargs)
                 raise
 
@@ -785,6 +869,7 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
             transliteration_mode=mode,
             respect_edits=False,
         )
+        add_log(job_id, "Normalization and correction completed")
         add_log(job_id, f"Caption script: {script} ({mode})")
 
         add_log(job_id, "Generating timeline")
@@ -843,6 +928,7 @@ def _new_job(job_id: str, **fields) -> dict:
         "output_language": fields.get("output_language") or fields.get("language") or "auto",
         "output_script": fields.get("output_script", "native"),
         "transliteration_mode": fields.get("transliteration_mode", "none"),
+        "transcription_quality": fields.get("transcription_quality", "fast"),
         "error_code": None,
         "progress": fields.get("progress", 10),
         "message": fields.get("message", ""),
@@ -877,6 +963,7 @@ async def upload_file(
     language: Optional[str] = Form(None),
     source_type: Optional[str] = Form(None),
     output_script: Optional[str] = Form(None),
+    transcription_quality: Optional[str] = Form(None),
 ):
     require_ffmpeg()
     active = sum(
@@ -890,6 +977,7 @@ async def upload_file(
         src_lang = normalize_source_language(language)
         script = normalize_output_script(output_script, src_lang)
         mode = resolve_transliteration_mode(src_lang, script)
+        quality = normalize_transcription_quality(transcription_quality)
         job_id = str(uuid.uuid4())
         raw_filename = file.filename or ("recording.webm" if stype == "recording" else "video.mp4")
         clean_filename = os.path.basename(raw_filename)
@@ -907,6 +995,7 @@ async def upload_file(
             output_language=src_lang,
             output_script=script,
             transliteration_mode=mode,
+            transcription_quality=quality,
             source_type=stype,
             status="processing",
             transcription_status="processing",
@@ -960,6 +1049,7 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
         output_language=src_lang,
         output_script=script,
         transliteration_mode=mode,
+        transcription_quality=normalize_transcription_quality(request.transcription_quality),
         source_type="youtube",
     )
 
@@ -1027,6 +1117,14 @@ async def get_status(job_id: str):
         "source_language": job.get("source_language"),
         "output_script": job.get("output_script", "native"),
         "transliteration_mode": job.get("transliteration_mode", "none"),
+        "transcription_quality": job.get("transcription_quality", "fast"),
+        "requested_model": job.get("requested_model"),
+        "actual_model": job.get("actual_model"),
+        "asr_fallback": bool(job.get("asr_fallback")),
+        "asr_fallback_reason": job.get("asr_fallback_reason"),
+        "asr_device": job.get("asr_device"),
+        "asr_compute_type": job.get("asr_compute_type"),
+        "asr_beam_size": job.get("asr_beam_size"),
         "error": job.get("error"),
         "error_code": job.get("error_code"),
         "source_type": job.get("source_type", "upload"),
@@ -1236,11 +1334,13 @@ async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks, reque
     src = normalize_source_language(request.language or job.get("source_language") or "auto")
     script = normalize_output_script(request.output_script or job.get("output_script"), src)
     mode = resolve_transliteration_mode(src, script)
+    quality = normalize_transcription_quality(request.transcription_quality or job.get("transcription_quality"))
     update_job(
         job["job_id"],
         source_language=src,
         output_script=script,
         transliteration_mode=mode,
+        transcription_quality=quality,
         language=None if src == "auto" else src,
         transcription_status="processing",
         status="processing",

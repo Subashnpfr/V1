@@ -16,6 +16,7 @@ function DashboardContent() {
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [language, setLanguage] = useState('auto');
   const [outputScript, setOutputScript] = useState('native');
+  const [transcriptionQuality, setTranscriptionQuality] = useState('fast');
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -47,6 +48,12 @@ function DashboardContent() {
           }
           if (res.data.status === 'completed') {
             setLoading(false);
+            if (res.data.asr_fallback) {
+              setMessage(
+                res.data.message
+                  + ' High Accuracy requested, but this system could not load large-v3; the Medium model was used.'
+              );
+            }
             if (fromRecording) {
               router.push(`/editor?job_id=${jobId}`);
             }
@@ -79,6 +86,7 @@ function DashboardContent() {
     formData.append('source_type', 'recording');
     if (language && language !== 'auto') formData.append('language', language);
     formData.append('output_script', language === 'en' ? 'native' : outputScript);
+    formData.append('transcription_quality', transcriptionQuality);
     try {
       const res = await axios.post(`${API_BASE}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
@@ -114,6 +122,7 @@ function DashboardContent() {
     formData.append('file', selectedFile);
     if (language && language !== 'auto') formData.append('language', language);
     formData.append('output_script', language === 'en' ? 'native' : outputScript);
+    formData.append('transcription_quality', transcriptionQuality);
 
     try {
       const res = await axios.post(`${API_BASE}/upload`, formData, {
@@ -154,7 +163,8 @@ function DashboardContent() {
       const res = await axios.post(`${API_BASE}/youtube`, {
         url: youtubeUrl.trim(),
         language: language === 'auto' ? null : language,
-        output_script: language === 'en' ? 'native' : outputScript
+        output_script: language === 'en' ? 'native' : outputScript,
+        transcription_quality: transcriptionQuality
       });
       if (res.data.success) {
         setJobId(res.data.job_id);
@@ -210,6 +220,18 @@ function DashboardContent() {
             <option value="en">English</option>
             <option value="ne">Nepali (नेपाली)</option>
             <option value="hi">Hindi / Hinglish</option>
+          </select>
+
+          <label className="field-label" htmlFor="transcription-quality">Transcription quality</label>
+          <select
+            id="transcription-quality"
+            value={transcriptionQuality}
+            onChange={(e) => setTranscriptionQuality(e.target.value)}
+            disabled={loading}
+            style={{ marginBottom: '1.15rem' }}
+          >
+            <option value="fast">Fast — everyday use (medium model)</option>
+            <option value="high_accuracy">High accuracy — large-v3 if this PC can load it (slower, more RAM)</option>
           </select>
 
           {language !== 'en' && (

@@ -96,4 +96,5 @@ def load_job(outputs_dir: Path, job_id: str) -> Optional[Dict[str, Any]]:
     data.setdefault("output_script", "native")
     data.setdefault("transliteration_mode", "none")
     data.setdefault("source_language", data.get("language") or "auto")
+    data.setdefault("transcription_quality", "fast")
     return data

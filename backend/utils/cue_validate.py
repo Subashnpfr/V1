@@ -34,9 +34,10 @@ def validate_cues(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not isinstance(words, list):
             words = []
         extra = {}
-        native = item.get("native_text")
+        native = item.get("native_text") or item.get("original_text")
         if isinstance(native, str) and native:
             extra["native_text"] = native[:8000]
+            extra["original_text"] = native[:8000]
         nw = item.get("native_words")
         if isinstance(nw, list):
             extra["native_words"] = nw

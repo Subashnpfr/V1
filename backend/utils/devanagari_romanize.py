@@ -14,8 +14,11 @@ V1 romanization (readability over ISO 15919):
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
+from functools import lru_cache
+from pathlib import Path
 
 VIRAMA = "\u094d"
 NUKTA = "\u093c"
@@ -104,6 +107,32 @@ CONSONANT = {
 
 DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
+_DATA = Path(__file__).resolve().parent.parent / "data"
+
+
+@lru_cache(maxsize=1)
+def _lexicon() -> dict:
+    path = _DATA / "nepali_lexicon.json"
+    if not path.is_file():
+        return {}
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _merged_roman() -> dict:
+    data = _lexicon()
+    merged = dict(COMMON_ROMAN)
+    merged.update(data.get("roman_overrides") or {})
+    return merged
+
+
+def _merged_proper() -> dict:
+    data = _lexicon()
+    merged = dict(PROPER_NOUNS)
+    merged.update(data.get("proper_nouns_devanagari") or {})
+    return merged
+
+
 # High-frequency words: conventional romanized Nepali (not ISO 15919).
 COMMON_ROMAN = {
     "हुन्छ": "hunchha",
@@ -132,6 +161,8 @@ PROPER_NOUNS = {
     "काठमाडौँ": "Kathmandu",
     "पोखरा": "Pokhara",
     "नेपाल": "Nepal",
+    "चितवन": "Chitwan",
+    "गुल्मी": "Gulmi",
     "भारत": "Bharat",
     "यूट्यूब": "YouTube",
     "युट्युब": "YouTube",
@@ -178,12 +209,14 @@ def romanize_word(word: str) -> str:
         return ""
     word = unicodedata.normalize("NFC", word).translate(DIGITS)
     key = word.strip("।.!?,;:")
-    if key in COMMON_ROMAN:
+    roman_map = _merged_roman()
+    proper_map = _merged_proper()
+    if key in roman_map:
         suffix = word[len(key):]
-        return COMMON_ROMAN[key] + suffix.replace("।", ".")
-    if key in PROPER_NOUNS:
+        return roman_map[key] + suffix.replace("।", ".")
+    if key in proper_map:
         suffix = word[len(key):]
-        return PROPER_NOUNS[key] + suffix.replace("।", ".")
+        return proper_map[key] + suffix.replace("।", ".")
     if URL_LIKE.search(word) or LATIN_TOKEN.match(word):
         return word.replace("।", ".")
     if not re.search(r"[\u0900-\u097F]", word):
@@ -328,3 +361,8 @@ def romanize_timed_words(words: list[dict] | None) -> list[dict]:
                 "end": round(start + (i + 1) * step, 3),
             })
     return out
+
+
+def romanize_nepali(text: str, *, sentence_case: bool = True) -> str:
+    """Public alias: Devanagari → V1 Romanized Nepali (not translation)."""
+    return romanize_caption(text, sentence_case=sentence_case)
