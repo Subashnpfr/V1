@@ -100,12 +100,31 @@ def test_romanize_failure_keeps_native(monkeypatch):
     def boom(text, **kwargs):
         raise RuntimeError("romanize boom")
 
-    monkeypatch.setattr("utils.caption_script.romanize_caption", boom)
+    monkeypatch.setattr("utils.caption_script.romanize_nepali", boom)
     cues = [
         snapshot_native({"id": 1, "start": 0, "end": 1, "text": "तपाईंलाई कस्तो छ?", "words": []}),
     ]
     out = apply_output_script(cues, output_script="roman", source_language="ne")
     assert "तपाईंलाई" in out[0]["text"]
+
+
+def test_nepali_fast_uses_medium(monkeypatch):
+    import app as appmod
+
+    calls = []
+
+    def fake_load(key, name, preferred_compute=None):
+        calls.append(name)
+        return "model"
+
+    monkeypatch.setattr(appmod, "load_whisper_model", fake_load)
+    _, lang, label, meta = appmod.get_whisper_model_and_language("ne", "fast")
+    assert lang == "ne"
+    assert "large-v3" not in calls
+    assert "medium" in label.lower()
+    assert meta["requested_model"] == "medium"
+    assert meta["actual_model"] == "medium"
+    assert meta["fallback"] is False
 
 
 def test_nepali_whisper_falls_back_to_medium(monkeypatch):
@@ -120,11 +139,14 @@ def test_nepali_whisper_falls_back_to_medium(monkeypatch):
         return "medium-model"
 
     monkeypatch.setattr(appmod, "load_whisper_model", fake_load)
-    model, lang, label = appmod.get_whisper_model_and_language("ne")
+    model, lang, label, meta = appmod.get_whisper_model_and_language("ne", "high_accuracy")
     assert model == "medium-model"
     assert lang == "ne"
     assert "medium" in label.lower()
     assert ("ne", "large-v3") in calls
+    assert meta["requested_model"] == "large-v3"
+    assert meta["actual_model"] == "medium"
+    assert meta["fallback"] is True
 
 
 def test_worker_language_invalid_does_not_use_http_exception():
@@ -136,17 +158,21 @@ def test_worker_language_invalid_does_not_use_http_exception():
     assert coerce_source_language("???") == "auto"
 
 
-def test_script_convert_endpoint():
+def test_script_convert_endpoint(tmp_path):
     import uuid
     import app as appmod
     from fastapi.testclient import TestClient
+    from conftest import authed_client
 
+    client, user_id, project_id = authed_client(appmod, tmp_path, email="script@example.com")
     jid = str(uuid.uuid4())
     appmod.jobs[jid] = {
         "job_id": jid,
         "source_language": "ne",
         "output_script": "native",
         "transliteration_mode": "none",
+        "user_id": user_id,
+        "project_id": project_id,
         "subtitles": [
             snapshot_native({
                 "id": 1,
@@ -157,7 +183,6 @@ def test_script_convert_endpoint():
             })
         ],
     }
-    client = TestClient(appmod.app)
     res = client.post(f"/script/{jid}", json={"output_script": "roman"})
     assert res.status_code == 200, res.text
     body = res.json()

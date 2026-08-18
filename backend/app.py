@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session as DbSession
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,7 +29,7 @@ OUTPUTS_DIR = BACKEND_DIR / "outputs"
 TEMP_DIR = BACKEND_DIR / "temp"
 
 from utils.nepali_correction import process_nepali_correction_pipeline
-from utils.caption_text import is_junk_token, sanitize_caption_text
+from utils.caption_text import is_devanagari_text, is_junk_token, sanitize_caption_text
 from utils.ffmpeg_tools import (
     ffmpeg_available,
     ffmpeg_location_dir,
@@ -65,17 +66,42 @@ from utils.recording_limits import (
     MAX_RECORDING_DURATION_SECONDS,
     recording_duration_error,
 )
-from utils.whisper_decode import whisper_transcribe_options
+from utils.whisper_decode import get_transcription_config, requested_whisper_model, whisper_transcribe_options
+from utils.transcription_quality import coerce_transcription_quality, normalize_transcription_quality
+from utils.nepali_asr_correct import correct_nepali_asr
+from utils.nepali_normalize import normalize_nepali_text
+
+from auth.config import FRONTEND_ORIGIN, SESSION_COOKIE_NAME
+from auth.sessions import get_session_by_token
+from db.database import SessionLocal
+from auth.deps import get_current_user
+from auth.ownership import authorize_job, require_project
+from auth.routes import router as auth_router
+from routes.projects import router as projects_router
+from db.database import Base, engine, get_db
+from db.models import User  # noqa: F401 — register models
 
 app = FastAPI(title="Auto Captions Studio API")
 
+_cors_origins = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        f"{FRONTEND_ORIGIN},http://127.0.0.1:3000,http://localhost:3000",
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=False,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(projects_router)
 
 for _dir in (UPLOADS_DIR, OUTPUTS_DIR, TEMP_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +110,7 @@ cpu_worker_count = max(1, (os.cpu_count() or 4) - 1)
 
 # Global Model Cache (loaded once on demand per language)
 MODEL_CACHE: Dict[str, Any] = {}
+MODEL_RUNTIME: Dict[str, dict] = {}
 
 def get_device_and_compute():
     device = "cpu"
@@ -112,10 +139,12 @@ def load_whisper_model(key: str, name: str, preferred_compute: Optional[str] = N
 
     model = None
     last_err = None
+    used_device, used_ct = device, compute_type
     for ct in compute_try:
         print(f"Loading WhisperModel '{name}' for key '{key}' on {device} ({ct})...")
         try:
             model = WhisperModel(name, device=device, compute_type=ct, cpu_threads=cpu_worker_count)
+            used_device, used_ct = device, ct
             break
         except Exception as e:
             last_err = e
@@ -123,8 +152,10 @@ def load_whisper_model(key: str, name: str, preferred_compute: Optional[str] = N
     if model is None:
         print(f"Primary load failed ({last_err}). Using CPU int8 fallback...")
         model = WhisperModel(name, device="cpu", compute_type="int8", cpu_threads=cpu_worker_count)
+        used_device, used_ct = "cpu", "int8"
 
     MODEL_CACHE[key] = model
+    MODEL_RUNTIME[key] = {"device": used_device, "compute_type": used_ct, "name": name}
     return model
 
 FFMPEG_MISSING_MSG = (
@@ -139,36 +170,75 @@ def require_ffmpeg():
 
 @app.on_event("startup")
 async def startup_event():
+    Base.metadata.create_all(bind=engine)
     print("FastAPI server started successfully on http://127.0.0.1:8000")
     if ffmpeg_available():
         print(f"FFmpeg detected: {resolve_ffmpeg_bin()}")
     else:
         print(f"WARNING: {FFMPEG_MISSING_MSG}")
 
-def get_whisper_model_and_language(language_code: Optional[str]):
+def get_whisper_model_and_language(language_code: Optional[str], quality: Optional[str] = "fast"):
     """
-    English -> small
-    Hindi   -> medium
-    Nepali  -> large-v3, then medium if load fails
-    Auto    -> medium
+    Returns (model, forced_lang, label, meta).
+    meta always records requested vs actual model (no silent High Accuracy lie).
     """
     lang = coerce_source_language(language_code)
+    cfg = get_transcription_config(quality=quality, language=None if lang == "auto" else lang)
+    requested = cfg["requested_model"]
+    runtime_key = "mix"
+    actual = requested
+    fallback = False
+    reason = None
+    label = "Auto language model (medium)"
+    forced = None
+
     if lang == "en":
+        runtime_key = "en"
         model = load_whisper_model("en", "small")
-        return model, "en", "English model (small)"
-    if lang == "hi":
+        forced, label = "en", "English model (small)"
+        actual = "small"
+    elif lang == "hi":
+        runtime_key = "hi"
         model = load_whisper_model("hi", "medium")
-        return model, "hi", "Hindi model (medium)"
-    if lang == "ne":
-        try:
-            model = load_whisper_model("ne", "large-v3", preferred_compute="int8_float32")
-            return model, "ne", "Nepali model (large-v3)"
-        except Exception as e:
-            print(f"Nepali large-v3 unavailable ({e}). Falling back to medium.")
+        forced, label = "hi", "Hindi model (medium)"
+        actual = "medium"
+    elif lang == "ne":
+        if cfg["quality"] == "high_accuracy":
+            try:
+                runtime_key = "ne"
+                model = load_whisper_model("ne", "large-v3", preferred_compute="int8_float32")
+                forced, label = "ne", "Nepali model (large-v3, high accuracy)"
+                actual = "large-v3"
+            except Exception as e:
+                print(f"Nepali large-v3 unavailable ({e}). Falling back to medium.")
+                runtime_key = "ne-medium"
+                model = load_whisper_model("ne-medium", "medium")
+                forced, label = "ne", "Nepali model (medium fallback)"
+                actual = "medium"
+                fallback = True
+                reason = "insufficient_memory" if "memory" in str(e).lower() else "load_failed"
+        else:
+            runtime_key = "ne-medium"
             model = load_whisper_model("ne-medium", "medium")
-            return model, "ne", "Nepali model (medium fallback)"
-    model = load_whisper_model("mix", "medium")
-    return model, None, "Auto language model (medium)"
+            forced, label = "ne", "Nepali model (medium, fast)"
+            actual = "medium"
+    else:
+        model = load_whisper_model("mix", "medium")
+        actual = "medium"
+
+    rt = MODEL_RUNTIME.get(runtime_key) or {}
+    meta = {
+        "quality": cfg["quality"],
+        "requested_model": requested,
+        "actual_model": actual,
+        "fallback": fallback,
+        "fallback_reason": reason,
+        "device": rt.get("device"),
+        "compute_type": rt.get("compute_type"),
+        "beam_size": cfg["beam_size"],
+        "vad_enabled": cfg["vad_enabled"],
+    }
+    return model, forced, label, meta
 
 jobs: Dict[str, dict] = {}
 MAX_ACTIVE_JOBS = 2
@@ -202,6 +272,10 @@ def get_job(job_id: str) -> dict:
     return loaded
 
 
+def get_job_for_user(job_id: str, user: User) -> dict:
+    return authorize_job(user, get_job(job_id))
+
+
 def require_upload_path(path_str: Optional[str]) -> str:
     if not path_str:
         raise HTTPException(status_code=400, detail="Original media file missing")
@@ -220,6 +294,8 @@ class YouTubeRequest(BaseModel):
     url: str
     language: Optional[str] = None
     output_script: Optional[str] = None
+    transcription_quality: Optional[str] = None
+    project_id: str
 
 class SubtitleItem(BaseModel):
     id: int
@@ -244,6 +320,7 @@ class ScriptConvertRequest(BaseModel):
 class RetranscribeRequest(BaseModel):
     language: Optional[str] = None
     output_script: Optional[str] = None
+    transcription_quality: Optional[str] = None
 
 class OverlayFrame(BaseModel):
     start: float
@@ -637,7 +714,8 @@ def cues_from_whisper_segments(segments) -> list:
                 words.append({
                     "text": token,
                     "start": round(w.start, 3),
-                    "end": round(w.end, 3)
+                    "end": round(w.end, 3),
+                    **({"confidence": round(float(w.probability), 3)} if getattr(w, "probability", None) is not None else {}),
                 })
         else:
             raw_words = sanitize_caption_text(seg.text).split()
@@ -653,7 +731,9 @@ def cues_from_whisper_segments(segments) -> list:
                     "end": round(seg.start + (i + 1) * w_dur, 3)
                 })
 
-        cue_text = process_nepali_correction_pipeline(seg.text)
+        cue_text = sanitize_caption_text(seg.text)
+        if is_devanagari_text(cue_text):
+            cue_text, words = correct_nepali_asr(cue_text, words=words or None)
         if not cue_text and words:
             cue_text = " ".join(w["text"] for w in words)
         if not cue_text:
@@ -719,9 +799,36 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
         update_job(job_id, progress=28, status="loading speech model")
         add_log(job_id, "Audio extracted. Loading Whisper (first run downloads the model and can take several minutes)...")
 
-        model, forced_lang, model_label = get_whisper_model_and_language(language)
-        transcribe_kwargs = whisper_transcribe_options(forced_lang)
-        add_log(job_id, f"Using {model_label} (beam {transcribe_kwargs.get('beam_size', 1)})")
+        quality = coerce_transcription_quality((jobs.get(job_id) or {}).get("transcription_quality"))
+        cfg = get_transcription_config(quality=quality, language=None if coerce_source_language(language) == "auto" else coerce_source_language(language))
+        add_log(job_id, f"requested_quality={cfg['quality']} requested_model={cfg['requested_model']}")
+        model, forced_lang, model_label, asr_meta = get_whisper_model_and_language(language, quality)
+        transcribe_kwargs = whisper_transcribe_options(forced_lang, quality)
+        if asr_meta.get("fallback"):
+            add_log(
+                job_id,
+                f"quality={asr_meta['quality']} requested_model={asr_meta['requested_model']} "
+                f"actual_model={asr_meta['actual_model']} fallback=true reason={asr_meta.get('fallback_reason')} "
+                f"device={asr_meta.get('device')} compute_type={asr_meta.get('compute_type')}",
+            )
+        else:
+            add_log(
+                job_id,
+                f"quality={asr_meta['quality']} requested_model={asr_meta['requested_model']} "
+                f"actual_model={asr_meta['actual_model']} fallback=false "
+                f"device={asr_meta.get('device')} compute_type={asr_meta.get('compute_type')} beam={asr_meta.get('beam_size')} vad={asr_meta.get('vad_enabled')}",
+            )
+        update_job(
+            job_id,
+            transcription_quality=asr_meta["quality"],
+            requested_model=asr_meta["requested_model"],
+            actual_model=asr_meta["actual_model"],
+            asr_fallback=asr_meta["fallback"],
+            asr_fallback_reason=asr_meta.get("fallback_reason"),
+            asr_device=asr_meta.get("device"),
+            asr_compute_type=asr_meta.get("compute_type"),
+            asr_beam_size=asr_meta.get("beam_size"),
+        )
 
         add_log(job_id, "Transcribing speech — this stays on this step until the whole file is done")
         update_job(job_id, progress=40, status="transcribing")
@@ -735,6 +842,12 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
                     add_log(job_id, f"large-v3 decode failed ({transcribe_err}); retrying with medium")
                     model = load_whisper_model("ne-medium", "medium")
                     model_label = "Nepali model (medium fallback)"
+                    update_job(
+                        job_id,
+                        actual_model="medium",
+                        asr_fallback=True,
+                        asr_fallback_reason="decode_failed",
+                    )
                     return _run_whisper_pass(model, clean_audio, kwargs)
                 raise
 
@@ -785,6 +898,7 @@ def process_transcription_job(job_id: str, file_path: str, language: Optional[st
             transliteration_mode=mode,
             respect_edits=False,
         )
+        add_log(job_id, "Normalization and correction completed")
         add_log(job_id, f"Caption script: {script} ({mode})")
 
         add_log(job_id, "Generating timeline")
@@ -843,6 +957,7 @@ def _new_job(job_id: str, **fields) -> dict:
         "output_language": fields.get("output_language") or fields.get("language") or "auto",
         "output_script": fields.get("output_script", "native"),
         "transliteration_mode": fields.get("transliteration_mode", "none"),
+        "transcription_quality": fields.get("transcription_quality", "fast"),
         "error_code": None,
         "progress": fields.get("progress", 10),
         "message": fields.get("message", ""),
@@ -852,6 +967,8 @@ def _new_job(job_id: str, **fields) -> dict:
         "burned_path": None,
         "error": None,
         "logs": [],
+        "project_id": fields.get("project_id"),
+        "user_id": fields.get("user_id"),
     }
     jobs[job_id] = job
     persist(job_id)
@@ -877,11 +994,19 @@ async def upload_file(
     language: Optional[str] = Form(None),
     source_type: Optional[str] = Form(None),
     output_script: Optional[str] = Form(None),
+    transcription_quality: Optional[str] = Form(None),
+    project_id: Optional[str] = Form(None),
+    user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
 ):
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required.")
+    require_project(db, user, project_id)
     require_ffmpeg()
     active = sum(
         1 for j in jobs.values()
         if j.get("transcription_status") not in {"completed", "failed"}
+        and j.get("user_id") == user.id
     )
     if active >= MAX_ACTIVE_JOBS:
         raise HTTPException(status_code=429, detail="Too many active jobs. Wait for an existing job to finish.")
@@ -890,6 +1015,7 @@ async def upload_file(
         src_lang = normalize_source_language(language)
         script = normalize_output_script(output_script, src_lang)
         mode = resolve_transliteration_mode(src_lang, script)
+        quality = normalize_transcription_quality(transcription_quality)
         job_id = str(uuid.uuid4())
         raw_filename = file.filename or ("recording.webm" if stype == "recording" else "video.mp4")
         clean_filename = os.path.basename(raw_filename)
@@ -907,11 +1033,14 @@ async def upload_file(
             output_language=src_lang,
             output_script=script,
             transliteration_mode=mode,
+            transcription_quality=quality,
             source_type=stype,
             status="processing",
             transcription_status="processing",
             progress=15,
             message="Uploading recording..." if stype == "recording" else "File uploaded successfully.",
+            project_id=project_id,
+            user_id=user.id,
         )
         background_tasks.add_task(process_transcription_job, job_id, str(dest), language)
         return {
@@ -929,7 +1058,13 @@ async def upload_file(
 
 
 @app.post("/youtube")
-async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeRequest):
+async def process_youtube(
+    background_tasks: BackgroundTasks,
+    request: YouTubeRequest,
+    user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+):
+    require_project(db, user, request.project_id)
     try:
         url = validate_youtube_url(request.url)
     except ValueError as exc:
@@ -942,6 +1077,7 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
     active = sum(
         1 for j in jobs.values()
         if j.get("transcription_status") not in {"completed", "failed"}
+        and j.get("user_id") == user.id
     )
     if active >= MAX_ACTIVE_JOBS:
         raise HTTPException(status_code=429, detail="Too many active jobs. Wait for an existing job to finish.")
@@ -960,7 +1096,10 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
         output_language=src_lang,
         output_script=script,
         transliteration_mode=mode,
+        transcription_quality=normalize_transcription_quality(request.transcription_quality),
         source_type="youtube",
+        project_id=request.project_id,
+        user_id=user.id,
     )
 
     def download_and_process():
@@ -1011,9 +1150,54 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
     return {"success": True, "job_id": job_id, "message": "YouTube video queued."}
 
 
+def _jobs_for_project(user: User, project_id: str) -> list[dict]:
+    seen = set()
+    out = []
+    for jid, job in jobs.items():
+        if job.get("user_id") == user.id and job.get("project_id") == project_id:
+            seen.add(jid)
+            out.append(_job_summary(job))
+    if OUTPUTS_DIR.is_dir():
+        for path in OUTPUTS_DIR.glob("*.job.json"):
+            jid = path.stem
+            if jid in seen:
+                continue
+            loaded = load_job(OUTPUTS_DIR, jid)
+            if not loaded:
+                continue
+            if loaded.get("user_id") == user.id and loaded.get("project_id") == project_id:
+                jobs[jid] = loaded
+                out.append(_job_summary(loaded))
+    out.sort(key=lambda j: j.get("updated_at") or "", reverse=True)
+    return out
+
+
+def _job_summary(job: dict) -> dict:
+    return {
+        "job_id": job.get("job_id"),
+        "filename": job.get("filename"),
+        "status": job.get("status"),
+        "transcription_status": job.get("transcription_status"),
+        "export_status": job.get("export_status"),
+        "is_audio": job.get("is_audio", False),
+        "source_type": job.get("source_type", "upload"),
+        "updated_at": job.get("updated_at"),
+    }
+
+
+@app.get("/api/projects/{project_id}/jobs")
+async def list_project_jobs(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+):
+    require_project(db, user, project_id)
+    return {"success": True, "jobs": _jobs_for_project(user, project_id)}
+
+
 @app.get("/status/{job_id}")
-async def get_status(job_id: str):
-    job = get_job(job_id)
+async def get_status(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     return {
         "success": True,
         "job_id": job["job_id"],
@@ -1027,6 +1211,14 @@ async def get_status(job_id: str):
         "source_language": job.get("source_language"),
         "output_script": job.get("output_script", "native"),
         "transliteration_mode": job.get("transliteration_mode", "none"),
+        "transcription_quality": job.get("transcription_quality", "fast"),
+        "requested_model": job.get("requested_model"),
+        "actual_model": job.get("actual_model"),
+        "asr_fallback": bool(job.get("asr_fallback")),
+        "asr_fallback_reason": job.get("asr_fallback_reason"),
+        "asr_device": job.get("asr_device"),
+        "asr_compute_type": job.get("asr_compute_type"),
+        "asr_beam_size": job.get("asr_beam_size"),
         "error": job.get("error"),
         "error_code": job.get("error_code"),
         "source_type": job.get("source_type", "upload"),
@@ -1035,8 +1227,8 @@ async def get_status(job_id: str):
 
 
 @app.get("/logs/{job_id}")
-async def get_job_logs(job_id: str):
-    job = get_job(job_id)
+async def get_job_logs(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     return {
         "success": True,
         "job_id": job["job_id"],
@@ -1049,17 +1241,31 @@ async def get_job_logs(job_id: str):
 
 @app.websocket("/ws/logs/{job_id}")
 async def websocket_logs(websocket: WebSocket, job_id: str):
-    await websocket.accept()
+    token = websocket.cookies.get(SESSION_COOKIE_NAME)
+    db = SessionLocal()
     try:
-        jid = parse_job_id(job_id)
-    except HTTPException:
-        await websocket.close(code=1008)
-        return
+        row = get_session_by_token(db, token)
+        if not row:
+            await websocket.close(code=1008)
+            return
+        user = db.get(User, row.user_id)
+        if not user or not user.is_active:
+            await websocket.close(code=1008)
+            return
+        try:
+            jid = parse_job_id(job_id)
+            get_job_for_user(jid, user)
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+    finally:
+        db.close()
+    await websocket.accept()
     sent = 0
     try:
         while True:
             try:
-                job = get_job(jid)
+                job = get_job_for_user(jid, user)
             except HTTPException:
                 job = None
             logs = (job or {}).get("logs") or []
@@ -1072,8 +1278,8 @@ async def websocket_logs(websocket: WebSocket, job_id: str):
 
 
 @app.get("/subtitles/{job_id}")
-async def get_subtitles(job_id: str):
-    job = get_job(job_id)
+async def get_subtitles(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     return {
         "success": True,
         "job_id": job["job_id"],
@@ -1091,8 +1297,8 @@ async def get_subtitles(job_id: str):
 
 
 @app.post("/subtitles/{job_id}")
-async def update_subtitles(job_id: str, request: SubtitlesUpdateRequest):
-    job = get_job(job_id)
+async def update_subtitles(job_id: str, request: SubtitlesUpdateRequest, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     incoming = validate_cues([s.model_dump() for s in request.subtitles])
     existing = {c.get("id"): c for c in (job.get("subtitles") or []) if isinstance(c, dict)}
     merged = []
@@ -1145,8 +1351,8 @@ def _approx_words_from_text(text: str, start: float, end: float) -> list:
 
 
 @app.post("/translate/{job_id}")
-async def translate_subtitles(job_id: str, request: TranslateRequest):
-    job = get_job(job_id)
+async def translate_subtitles(job_id: str, request: TranslateRequest, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     target_lang = request.target_language
     lang_code = LANG_CODE_MAP.get(target_lang)
     if not lang_code:
@@ -1196,9 +1402,9 @@ async def translate_subtitles(job_id: str, request: TranslateRequest):
 
 
 @app.post("/script/{job_id}")
-async def convert_caption_script(job_id: str, request: ScriptConvertRequest):
+async def convert_caption_script(job_id: str, request: ScriptConvertRequest, user: User = Depends(get_current_user)):
     """Change script only (romanize / restore native). Does not call Whisper or Google."""
-    job = get_job(job_id)
+    job = get_job_for_user(job_id, user)
     src = normalize_source_language(job.get("source_language") or job.get("detected_language") or job.get("language") or "auto")
     script = normalize_output_script(request.output_script, src)
     mode = normalize_transliteration_mode(request.transliteration_mode, src, script)
@@ -1229,18 +1435,25 @@ async def convert_caption_script(job_id: str, request: ScriptConvertRequest):
 
 
 @app.post("/retranscribe/{job_id}")
-async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks, request: RetranscribeRequest):
-    job = get_job(job_id)
+async def retranscribe_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    request: RetranscribeRequest,
+    user: User = Depends(get_current_user),
+):
+    job = get_job_for_user(job_id, user)
     require_ffmpeg()
     video_path = require_upload_path(job.get("video_path"))
     src = normalize_source_language(request.language or job.get("source_language") or "auto")
     script = normalize_output_script(request.output_script or job.get("output_script"), src)
     mode = resolve_transliteration_mode(src, script)
+    quality = normalize_transcription_quality(request.transcription_quality or job.get("transcription_quality"))
     update_job(
         job["job_id"],
         source_language=src,
         output_script=script,
         transliteration_mode=mode,
+        transcription_quality=quality,
         language=None if src == "auto" else src,
         transcription_status="processing",
         status="processing",
@@ -1255,8 +1468,13 @@ async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks, reque
 
 
 @app.post("/burn/{job_id}")
-async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request: Optional[BurnRequest] = None):
-    job = get_job(job_id)
+async def burn_subtitles(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    request: Optional[BurnRequest] = None,
+    user: User = Depends(get_current_user),
+):
+    job = get_job_for_user(job_id, user)
     require_ffmpeg()
     video_path = require_upload_path(job.get("video_path"))
     subtitles = job.get("subtitles") or []
@@ -1322,8 +1540,8 @@ async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request
 
 @app.get("/video/{job_id}")
 @app.get("/media/{job_id}")
-async def serve_media(job_id: str):
-    job = get_job(job_id)
+async def serve_media(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     media_path = require_upload_path(job.get("video_path"))
     ext = os.path.splitext(media_path)[1].lower()
     media_type_map = {
@@ -1342,7 +1560,8 @@ async def serve_media(job_id: str):
 
 
 @app.get("/download/{job_id}.srt")
-async def download_srt(job_id: str):
+async def download_srt(job_id: str, user: User = Depends(get_current_user)):
+    get_job_for_user(job_id, user)
     path = resolve_output_file(OUTPUTS_DIR, job_id, ".srt")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="SRT file not found")
@@ -1350,7 +1569,8 @@ async def download_srt(job_id: str):
 
 
 @app.get("/download/{job_id}.vtt")
-async def download_vtt(job_id: str):
+async def download_vtt(job_id: str, user: User = Depends(get_current_user)):
+    get_job_for_user(job_id, user)
     path = resolve_output_file(OUTPUTS_DIR, job_id, ".vtt")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="VTT file not found")
@@ -1358,7 +1578,8 @@ async def download_vtt(job_id: str):
 
 
 @app.get("/download/{job_id}.mp4")
-async def download_mp4(job_id: str):
+async def download_mp4(job_id: str, user: User = Depends(get_current_user)):
+    get_job_for_user(job_id, user)
     path = resolve_output_file(OUTPUTS_DIR, job_id, "_subtitled.mp4")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Burned MP4 file not found. Export from the studio first.")

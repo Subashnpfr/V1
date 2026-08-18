@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import axios from 'axios';
 import { Youtube, ArrowRight, Video, Sparkles, Mic } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import VoiceRecorder from './components/VoiceRecorder';
 import ProgressBar from './components/ProgressBar';
 import AppShell from './components/AppShell';
-import { API_BASE } from './utils/api';
+import AuthGate from './components/AuthGate';
+import { api } from './utils/api';
 
 function DashboardContent() {
   const router = useRouter();
@@ -16,6 +16,9 @@ function DashboardContent() {
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [language, setLanguage] = useState('auto');
   const [outputScript, setOutputScript] = useState('native');
+  const [transcriptionQuality, setTranscriptionQuality] = useState('fast');
+  const [projectId, setProjectId] = useState(null);
+  const [projectError, setProjectError] = useState(null);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -33,11 +36,29 @@ function DashboardContent() {
   }, []);
 
   useEffect(() => {
+    async function ensureProject() {
+      try {
+        const res = await api.get('/api/projects');
+        let projects = res.data.projects || [];
+        if (!projects.length) {
+          const created = await api.post('/api/projects', { name: 'My Project' });
+          projects = [created.data.project];
+        }
+        setProjectId(projects[0].id);
+      } catch (err) {
+        setProjectError('Could not load your project. Try refreshing.');
+        console.error(err);
+      }
+    }
+    ensureProject();
+  }, []);
+
+  useEffect(() => {
     if (!jobId || status === 'completed' || status === 'failed') return;
 
     const interval = setInterval(async () => {
       try {
-        const res = await axios.get(`${API_BASE}/status/${jobId}`);
+        const res = await api.get(`/status/${jobId}`);
         if (res.data.success) {
           setStatus(res.data.status);
           setProgress(res.data.progress);
@@ -47,6 +68,12 @@ function DashboardContent() {
           }
           if (res.data.status === 'completed') {
             setLoading(false);
+            if (res.data.asr_fallback) {
+              setMessage(
+                res.data.message
+                  + ' High Accuracy requested, but this system could not load large-v3; the Medium model was used.'
+              );
+            }
             if (fromRecording) {
               router.push(`/editor?job_id=${jobId}`);
             }
@@ -68,7 +95,7 @@ function DashboardContent() {
   }, [processLogs]);
 
   const handleRecordingUpload = async ({ blob, filename }) => {
-    if (!blob) return;
+    if (!blob || !projectId) return;
     setFromRecording(true);
     setLoading(true);
     setError(null);
@@ -77,10 +104,12 @@ function DashboardContent() {
     const formData = new FormData();
     formData.append('file', blob, filename || 'recording.webm');
     formData.append('source_type', 'recording');
+    formData.append('project_id', projectId);
     if (language && language !== 'auto') formData.append('language', language);
     formData.append('output_script', language === 'en' ? 'native' : outputScript);
+    formData.append('transcription_quality', transcriptionQuality);
     try {
-      const res = await axios.post(`${API_BASE}/upload`, formData, {
+      const res = await api.post('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       if (res.data.success) {
@@ -94,7 +123,7 @@ function DashboardContent() {
     } catch (err) {
       setLoading(false);
       if (err.code === 'ERR_NETWORK' || !err.response) {
-        setError(`Cannot reach the API at ${API_BASE}. Start the FastAPI backend and try again.`);
+        setError('Cannot reach the API. Start the FastAPI backend and try again.');
       } else {
         const detail = err.response?.data?.detail;
         setError(typeof detail === 'string' ? detail : err.message || 'Failed to upload recording');
@@ -103,7 +132,7 @@ function DashboardContent() {
   };
 
   const handleFileUpload = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !projectId) return;
     setFromRecording(false);
     setLoading(true);
     setError(null);
@@ -112,11 +141,13 @@ function DashboardContent() {
 
     const formData = new FormData();
     formData.append('file', selectedFile);
+    formData.append('project_id', projectId);
     if (language && language !== 'auto') formData.append('language', language);
     formData.append('output_script', language === 'en' ? 'native' : outputScript);
+    formData.append('transcription_quality', transcriptionQuality);
 
     try {
-      const res = await axios.post(`${API_BASE}/upload`, formData, {
+      const res = await api.post('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
@@ -134,7 +165,7 @@ function DashboardContent() {
     } catch (err) {
       setLoading(false);
       if (err.code === 'ERR_NETWORK' || !err.response) {
-        setError(`Cannot reach the API at ${API_BASE}. Start the FastAPI backend and try again.`);
+        setError('Cannot reach the API. Start the FastAPI backend and try again.');
       } else {
         const detail = err.response?.data?.detail;
         setError(typeof detail === 'string' ? detail : err.message || 'Failed to upload video');
@@ -144,17 +175,19 @@ function DashboardContent() {
 
   const handleYoutubeSubmit = async (e) => {
     e.preventDefault();
-    if (!youtubeUrl.trim()) return;
+    if (!youtubeUrl.trim() || !projectId) return;
     setFromRecording(false);
     setLoading(true);
     setError(null);
     setProgress(10);
     setMessage('Connecting to YouTube...');
     try {
-      const res = await axios.post(`${API_BASE}/youtube`, {
+      const res = await api.post('/youtube', {
         url: youtubeUrl.trim(),
         language: language === 'auto' ? null : language,
-        output_script: language === 'en' ? 'native' : outputScript
+        output_script: language === 'en' ? 'native' : outputScript,
+        transcription_quality: transcriptionQuality,
+        project_id: projectId,
       });
       if (res.data.success) {
         setJobId(res.data.job_id);
@@ -196,6 +229,7 @@ function DashboardContent() {
           ) : (
             <>
           {error && <div className="alert alert-error" role="alert">{error}</div>}
+          {projectError && <div className="alert alert-error" role="alert">{projectError}</div>}
 
           <label className="field-label" htmlFor="language">Spoken language</label>
           <select
@@ -210,6 +244,18 @@ function DashboardContent() {
             <option value="en">English</option>
             <option value="ne">Nepali (नेपाली)</option>
             <option value="hi">Hindi / Hinglish</option>
+          </select>
+
+          <label className="field-label" htmlFor="transcription-quality">Transcription quality</label>
+          <select
+            id="transcription-quality"
+            value={transcriptionQuality}
+            onChange={(e) => setTranscriptionQuality(e.target.value)}
+            disabled={loading}
+            style={{ marginBottom: '1.15rem' }}
+          >
+            <option value="fast">Fast — everyday use (medium model)</option>
+            <option value="high_accuracy">High accuracy — large-v3 if this PC can load it (slower, more RAM)</option>
           </select>
 
           {language !== 'en' && (
@@ -339,5 +385,9 @@ function DashboardContent() {
 }
 
 export default function Dashboard() {
-  return <DashboardContent />;
+  return (
+    <AuthGate>
+      <DashboardContent />
+    </AuthGate>
+  );
 }

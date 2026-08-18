@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import axios from 'axios';
 import { ArrowLeft, Globe, Save, Check, Loader2 } from 'lucide-react';
 import VideoPlayer from '../components/VideoPlayer';
 import Timeline from '../components/Timeline';
@@ -10,9 +9,10 @@ import SubtitleEditor from '../components/SubtitleEditor';
 import StylingPanel from '../components/StylingPanel';
 import ProgressBar from '../components/ProgressBar';
 import AppShell from '../components/AppShell';
+import AuthGate from '../components/AuthGate';
 import { resegmentSubtitles } from '../utils/segmentation';
 import { sanitizeSubtitleList } from '../utils/captionText';
-import { API_BASE } from '../utils/api';
+import { API_BASE, api } from '../utils/api';
 import { generateSubtitlePngFrames } from '../utils/exportRenderer';
 
 function EditorContent() {
@@ -90,7 +90,7 @@ function EditorContent() {
 
     async function fetchSubtitles() {
       try {
-        const res = await axios.get(`${API_BASE}/subtitles/${jobId}`);
+        const res = await api.get(`/subtitles/${jobId}`);
         if (res.data.success) {
           setJobStatus(res.data.transcription_status || res.data.status);
           setIsAudio(!!res.data.is_audio);
@@ -116,6 +116,8 @@ function EditorContent() {
       } catch (err) {
         const status = err.response?.status;
         if (status === 404) setLoadError('Job not found. The backend may have been restarted without a saved project file.');
+        else if (status === 403) setLoadError('You do not have access to this job.');
+        else if (status === 401) setLoadError('Please sign in to open this project.');
         else setLoadError('Could not load this project. Check that the API is running.');
       } finally {
         setLoading(false);
@@ -139,7 +141,7 @@ function EditorContent() {
 
     const interval = setInterval(async () => {
       try {
-        const res = await axios.get(`${API_BASE}/status/${jobId}`);
+        const res = await api.get(`/status/${jobId}`);
         if (res.data.success) {
           setBurnProgress(res.data.progress);
           setBurnMessage(res.data.message);
@@ -167,7 +169,7 @@ function EditorContent() {
     if (!jobId) return false;
     setSaving(true);
     try {
-      const res = await axios.post(`${API_BASE}/subtitles/${jobId}`, { subtitles });
+      const res = await api.post(`/subtitles/${jobId}`, { subtitles });
       if (res.data.success) {
         setSavedSuccess(true);
         setTimeout(() => setSavedSuccess(false), 2500);
@@ -196,7 +198,7 @@ function EditorContent() {
     if (!ok) return;
     setTranslating(true);
     try {
-      const res = await axios.post(`${API_BASE}/translate/${jobId}`, {
+      const res = await api.post(`/translate/${jobId}`, {
         target_language: targetLang
       });
       if (res.data.success) {
@@ -216,7 +218,7 @@ function EditorContent() {
     await handleSaveSubtitles();
     setConvertingScript(true);
     try {
-      const res = await axios.post(`${API_BASE}/script/${jobId}`, { output_script: outputScript });
+      const res = await api.post(`/script/${jobId}`, { output_script: outputScript });
       if (res.data.success) {
         setSubtitles(res.data.subtitles || []);
         setOutputScript(res.data.output_script);
@@ -239,17 +241,17 @@ function EditorContent() {
     if (!ok) return;
     setRetranscribing(true);
     try {
-      await axios.post(`${API_BASE}/retranscribe/${jobId}`, {
+      await api.post(`/retranscribe/${jobId}`, {
         language: captionLanguage,
         output_script: outputScript
       });
       setNotice('Re-transcribing… stay on this page.');
       const poll = setInterval(async () => {
         try {
-          const st = await axios.get(`${API_BASE}/status/${jobId}`);
+          const st = await api.get(`/status/${jobId}`);
           if (st.data.status === 'completed') {
             clearInterval(poll);
-            const res = await axios.get(`${API_BASE}/subtitles/${jobId}`);
+            const res = await api.get(`/subtitles/${jobId}`);
             setSubtitles(sanitizeSubtitleList(res.data.subtitles || []));
             setOutputScript(res.data.output_script || outputScript);
             setRetranscribing(false);
@@ -307,8 +309,8 @@ function EditorContent() {
       });
       setBurnMessage('Compositing overlay onto video...');
       setBackendBurning(true);
-      await axios.post(
-        `${API_BASE}/burn/${jobId}`,
+      await api.post(
+        `/burn/${jobId}`,
         { style_config: combinedStyle, frames },
         { timeout: 600000, maxBodyLength: Infinity, maxContentLength: Infinity }
       );
@@ -539,7 +541,9 @@ function EditorContent() {
 export default function EditorPage() {
   return (
     <Suspense fallback={<div style={{ textAlign: 'center', paddingTop: '4rem', color: 'var(--text-secondary)' }}>Loading studio…</div>}>
-      <EditorContent />
+      <AuthGate>
+        <EditorContent />
+      </AuthGate>
     </Suspense>
   );
 }
