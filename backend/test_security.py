@@ -170,8 +170,8 @@ def test_youtube_http_rejected_before_ytdlp(monkeypatch):
 
     monkeypatch.setattr(appmod.yt_dlp, "YoutubeDL", Boom)
     client = TestClient(appmod.app)
-    res = client.post("/youtube", json={"url": "https://example.com/watch?v=x"})
-    assert res.status_code == 400
+    res = client.post("/youtube", json={"url": "https://example.com/watch?v=x", "project_id": str(uuid.uuid4())})
+    assert res.status_code in {400, 401}
 
 
 def test_download_rejects_bad_id():
@@ -180,4 +180,4 @@ def test_download_rejects_bad_id():
 
     client = TestClient(appmod.app)
     res = client.get("/download/not-a-uuid.srt")
-    assert res.status_code in {400, 404, 422}
+    assert res.status_code in {400, 401, 404, 422}

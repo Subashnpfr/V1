@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session as DbSession
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -70,15 +71,37 @@ from utils.transcription_quality import coerce_transcription_quality, normalize_
 from utils.nepali_asr_correct import correct_nepali_asr
 from utils.nepali_normalize import normalize_nepali_text
 
+from auth.config import FRONTEND_ORIGIN, SESSION_COOKIE_NAME
+from auth.sessions import get_session_by_token
+from db.database import SessionLocal
+from auth.deps import get_current_user
+from auth.ownership import authorize_job, require_project
+from auth.routes import router as auth_router
+from routes.projects import router as projects_router
+from db.database import Base, engine, get_db
+from db.models import User  # noqa: F401 — register models
+
 app = FastAPI(title="Auto Captions Studio API")
+
+_cors_origins = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        f"{FRONTEND_ORIGIN},http://127.0.0.1:3000,http://localhost:3000",
+    ).split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=False,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(projects_router)
 
 for _dir in (UPLOADS_DIR, OUTPUTS_DIR, TEMP_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
@@ -147,6 +170,7 @@ def require_ffmpeg():
 
 @app.on_event("startup")
 async def startup_event():
+    Base.metadata.create_all(bind=engine)
     print("FastAPI server started successfully on http://127.0.0.1:8000")
     if ffmpeg_available():
         print(f"FFmpeg detected: {resolve_ffmpeg_bin()}")
@@ -248,6 +272,10 @@ def get_job(job_id: str) -> dict:
     return loaded
 
 
+def get_job_for_user(job_id: str, user: User) -> dict:
+    return authorize_job(user, get_job(job_id))
+
+
 def require_upload_path(path_str: Optional[str]) -> str:
     if not path_str:
         raise HTTPException(status_code=400, detail="Original media file missing")
@@ -267,6 +295,7 @@ class YouTubeRequest(BaseModel):
     language: Optional[str] = None
     output_script: Optional[str] = None
     transcription_quality: Optional[str] = None
+    project_id: str
 
 class SubtitleItem(BaseModel):
     id: int
@@ -938,6 +967,8 @@ def _new_job(job_id: str, **fields) -> dict:
         "burned_path": None,
         "error": None,
         "logs": [],
+        "project_id": fields.get("project_id"),
+        "user_id": fields.get("user_id"),
     }
     jobs[job_id] = job
     persist(job_id)
@@ -964,11 +995,18 @@ async def upload_file(
     source_type: Optional[str] = Form(None),
     output_script: Optional[str] = Form(None),
     transcription_quality: Optional[str] = Form(None),
+    project_id: Optional[str] = Form(None),
+    user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
 ):
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required.")
+    require_project(db, user, project_id)
     require_ffmpeg()
     active = sum(
         1 for j in jobs.values()
         if j.get("transcription_status") not in {"completed", "failed"}
+        and j.get("user_id") == user.id
     )
     if active >= MAX_ACTIVE_JOBS:
         raise HTTPException(status_code=429, detail="Too many active jobs. Wait for an existing job to finish.")
@@ -1001,6 +1039,8 @@ async def upload_file(
             transcription_status="processing",
             progress=15,
             message="Uploading recording..." if stype == "recording" else "File uploaded successfully.",
+            project_id=project_id,
+            user_id=user.id,
         )
         background_tasks.add_task(process_transcription_job, job_id, str(dest), language)
         return {
@@ -1018,7 +1058,13 @@ async def upload_file(
 
 
 @app.post("/youtube")
-async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeRequest):
+async def process_youtube(
+    background_tasks: BackgroundTasks,
+    request: YouTubeRequest,
+    user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+):
+    require_project(db, user, request.project_id)
     try:
         url = validate_youtube_url(request.url)
     except ValueError as exc:
@@ -1031,6 +1077,7 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
     active = sum(
         1 for j in jobs.values()
         if j.get("transcription_status") not in {"completed", "failed"}
+        and j.get("user_id") == user.id
     )
     if active >= MAX_ACTIVE_JOBS:
         raise HTTPException(status_code=429, detail="Too many active jobs. Wait for an existing job to finish.")
@@ -1051,6 +1098,8 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
         transliteration_mode=mode,
         transcription_quality=normalize_transcription_quality(request.transcription_quality),
         source_type="youtube",
+        project_id=request.project_id,
+        user_id=user.id,
     )
 
     def download_and_process():
@@ -1101,9 +1150,54 @@ async def process_youtube(background_tasks: BackgroundTasks, request: YouTubeReq
     return {"success": True, "job_id": job_id, "message": "YouTube video queued."}
 
 
+def _jobs_for_project(user: User, project_id: str) -> list[dict]:
+    seen = set()
+    out = []
+    for jid, job in jobs.items():
+        if job.get("user_id") == user.id and job.get("project_id") == project_id:
+            seen.add(jid)
+            out.append(_job_summary(job))
+    if OUTPUTS_DIR.is_dir():
+        for path in OUTPUTS_DIR.glob("*.job.json"):
+            jid = path.stem
+            if jid in seen:
+                continue
+            loaded = load_job(OUTPUTS_DIR, jid)
+            if not loaded:
+                continue
+            if loaded.get("user_id") == user.id and loaded.get("project_id") == project_id:
+                jobs[jid] = loaded
+                out.append(_job_summary(loaded))
+    out.sort(key=lambda j: j.get("updated_at") or "", reverse=True)
+    return out
+
+
+def _job_summary(job: dict) -> dict:
+    return {
+        "job_id": job.get("job_id"),
+        "filename": job.get("filename"),
+        "status": job.get("status"),
+        "transcription_status": job.get("transcription_status"),
+        "export_status": job.get("export_status"),
+        "is_audio": job.get("is_audio", False),
+        "source_type": job.get("source_type", "upload"),
+        "updated_at": job.get("updated_at"),
+    }
+
+
+@app.get("/api/projects/{project_id}/jobs")
+async def list_project_jobs(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+):
+    require_project(db, user, project_id)
+    return {"success": True, "jobs": _jobs_for_project(user, project_id)}
+
+
 @app.get("/status/{job_id}")
-async def get_status(job_id: str):
-    job = get_job(job_id)
+async def get_status(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     return {
         "success": True,
         "job_id": job["job_id"],
@@ -1133,8 +1227,8 @@ async def get_status(job_id: str):
 
 
 @app.get("/logs/{job_id}")
-async def get_job_logs(job_id: str):
-    job = get_job(job_id)
+async def get_job_logs(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     return {
         "success": True,
         "job_id": job["job_id"],
@@ -1147,17 +1241,31 @@ async def get_job_logs(job_id: str):
 
 @app.websocket("/ws/logs/{job_id}")
 async def websocket_logs(websocket: WebSocket, job_id: str):
-    await websocket.accept()
+    token = websocket.cookies.get(SESSION_COOKIE_NAME)
+    db = SessionLocal()
     try:
-        jid = parse_job_id(job_id)
-    except HTTPException:
-        await websocket.close(code=1008)
-        return
+        row = get_session_by_token(db, token)
+        if not row:
+            await websocket.close(code=1008)
+            return
+        user = db.get(User, row.user_id)
+        if not user or not user.is_active:
+            await websocket.close(code=1008)
+            return
+        try:
+            jid = parse_job_id(job_id)
+            get_job_for_user(jid, user)
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+    finally:
+        db.close()
+    await websocket.accept()
     sent = 0
     try:
         while True:
             try:
-                job = get_job(jid)
+                job = get_job_for_user(jid, user)
             except HTTPException:
                 job = None
             logs = (job or {}).get("logs") or []
@@ -1170,8 +1278,8 @@ async def websocket_logs(websocket: WebSocket, job_id: str):
 
 
 @app.get("/subtitles/{job_id}")
-async def get_subtitles(job_id: str):
-    job = get_job(job_id)
+async def get_subtitles(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     return {
         "success": True,
         "job_id": job["job_id"],
@@ -1189,8 +1297,8 @@ async def get_subtitles(job_id: str):
 
 
 @app.post("/subtitles/{job_id}")
-async def update_subtitles(job_id: str, request: SubtitlesUpdateRequest):
-    job = get_job(job_id)
+async def update_subtitles(job_id: str, request: SubtitlesUpdateRequest, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     incoming = validate_cues([s.model_dump() for s in request.subtitles])
     existing = {c.get("id"): c for c in (job.get("subtitles") or []) if isinstance(c, dict)}
     merged = []
@@ -1243,8 +1351,8 @@ def _approx_words_from_text(text: str, start: float, end: float) -> list:
 
 
 @app.post("/translate/{job_id}")
-async def translate_subtitles(job_id: str, request: TranslateRequest):
-    job = get_job(job_id)
+async def translate_subtitles(job_id: str, request: TranslateRequest, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     target_lang = request.target_language
     lang_code = LANG_CODE_MAP.get(target_lang)
     if not lang_code:
@@ -1294,9 +1402,9 @@ async def translate_subtitles(job_id: str, request: TranslateRequest):
 
 
 @app.post("/script/{job_id}")
-async def convert_caption_script(job_id: str, request: ScriptConvertRequest):
+async def convert_caption_script(job_id: str, request: ScriptConvertRequest, user: User = Depends(get_current_user)):
     """Change script only (romanize / restore native). Does not call Whisper or Google."""
-    job = get_job(job_id)
+    job = get_job_for_user(job_id, user)
     src = normalize_source_language(job.get("source_language") or job.get("detected_language") or job.get("language") or "auto")
     script = normalize_output_script(request.output_script, src)
     mode = normalize_transliteration_mode(request.transliteration_mode, src, script)
@@ -1327,8 +1435,13 @@ async def convert_caption_script(job_id: str, request: ScriptConvertRequest):
 
 
 @app.post("/retranscribe/{job_id}")
-async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks, request: RetranscribeRequest):
-    job = get_job(job_id)
+async def retranscribe_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    request: RetranscribeRequest,
+    user: User = Depends(get_current_user),
+):
+    job = get_job_for_user(job_id, user)
     require_ffmpeg()
     video_path = require_upload_path(job.get("video_path"))
     src = normalize_source_language(request.language or job.get("source_language") or "auto")
@@ -1355,8 +1468,13 @@ async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks, reque
 
 
 @app.post("/burn/{job_id}")
-async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request: Optional[BurnRequest] = None):
-    job = get_job(job_id)
+async def burn_subtitles(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    request: Optional[BurnRequest] = None,
+    user: User = Depends(get_current_user),
+):
+    job = get_job_for_user(job_id, user)
     require_ffmpeg()
     video_path = require_upload_path(job.get("video_path"))
     subtitles = job.get("subtitles") or []
@@ -1422,8 +1540,8 @@ async def burn_subtitles(job_id: str, background_tasks: BackgroundTasks, request
 
 @app.get("/video/{job_id}")
 @app.get("/media/{job_id}")
-async def serve_media(job_id: str):
-    job = get_job(job_id)
+async def serve_media(job_id: str, user: User = Depends(get_current_user)):
+    job = get_job_for_user(job_id, user)
     media_path = require_upload_path(job.get("video_path"))
     ext = os.path.splitext(media_path)[1].lower()
     media_type_map = {
@@ -1442,7 +1560,8 @@ async def serve_media(job_id: str):
 
 
 @app.get("/download/{job_id}.srt")
-async def download_srt(job_id: str):
+async def download_srt(job_id: str, user: User = Depends(get_current_user)):
+    get_job_for_user(job_id, user)
     path = resolve_output_file(OUTPUTS_DIR, job_id, ".srt")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="SRT file not found")
@@ -1450,7 +1569,8 @@ async def download_srt(job_id: str):
 
 
 @app.get("/download/{job_id}.vtt")
-async def download_vtt(job_id: str):
+async def download_vtt(job_id: str, user: User = Depends(get_current_user)):
+    get_job_for_user(job_id, user)
     path = resolve_output_file(OUTPUTS_DIR, job_id, ".vtt")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="VTT file not found")
@@ -1458,7 +1578,8 @@ async def download_vtt(job_id: str):
 
 
 @app.get("/download/{job_id}.mp4")
-async def download_mp4(job_id: str):
+async def download_mp4(job_id: str, user: User = Depends(get_current_user)):
+    get_job_for_user(job_id, user)
     path = resolve_output_file(OUTPUTS_DIR, job_id, "_subtitled.mp4")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Burned MP4 file not found. Export from the studio first.")

@@ -158,17 +158,21 @@ def test_worker_language_invalid_does_not_use_http_exception():
     assert coerce_source_language("???") == "auto"
 
 
-def test_script_convert_endpoint():
+def test_script_convert_endpoint(tmp_path):
     import uuid
     import app as appmod
     from fastapi.testclient import TestClient
+    from conftest import authed_client
 
+    client, user_id, project_id = authed_client(appmod, tmp_path, email="script@example.com")
     jid = str(uuid.uuid4())
     appmod.jobs[jid] = {
         "job_id": jid,
         "source_language": "ne",
         "output_script": "native",
         "transliteration_mode": "none",
+        "user_id": user_id,
+        "project_id": project_id,
         "subtitles": [
             snapshot_native({
                 "id": 1,
@@ -179,7 +183,6 @@ def test_script_convert_endpoint():
             })
         ],
     }
-    client = TestClient(appmod.app)
     res = client.post(f"/script/{jid}", json={"output_script": "roman"})
     assert res.status_code == 200, res.text
     body = res.json()
